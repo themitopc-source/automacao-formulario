@@ -43,41 +43,17 @@ const OBSERVACOES = [
 
 const GLOBAL_DAILY_LIMIT = 10;
 
-// utils
-const todayKey = () => {
-  const d = new Date();
-  return d.toISOString().slice(0,10); // YYYY-MM-DD
-};
-const fmtBR = (d: Date) => {
-  const dd = String(d.getDate()).padStart(2,"0");
-  const mm = String(d.getMonth()+1).padStart(2,"0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-};
-const parseBR = (s: string) => {
-  const [dd,mm,yyyy] = s.split("/");
-  return new Date(Number(yyyy), Number(mm)-1, Number(dd));
-};
+const todayKey = () => new Date().toISOString().slice(0,10);
+const fmtBR = (d: Date) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
+const parseBR = (s: string) => { const [dd,mm,yyyy]=s.split("/"); return new Date(+yyyy, +mm-1, +dd); };
 
 export default function PreEnvioForms() {
-  // estado base
   const [form, setForm] = useState<Form>(() => ({
-    classificacao: "",
-    empresa: "",
-    unidade: "",
-    data: fmtBR(new Date()),
-    hora: "08:00",
-    turno: "A",
-    area: "",
-    setor: "",
-    atividade: "",
-    intervencao: "",
-    cs: "",
-    observacao: "",
-    descricao: "",
-    fiz: "",
+    classificacao: "", empresa: "", unidade: "",
+    data: fmtBR(new Date()), hora: "08:00", turno: "A",
+    area: "", setor: "", atividade: "", intervencao: "",
+    cs: "", observacao: "", descricao: "", fiz: "",
   }));
-
   const [errors, setErrors] = useState<Partial<Record<keyof Form, string>>>({});
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -85,136 +61,73 @@ export default function PreEnvioForms() {
   const [used, setUsed] = useState(0);
   const [limitMsg, setLimitMsg] = useState<string | null>(null);
 
-  // carrega contador global do dia (client-side)
   useEffect(() => {
-    const k = `usedCount:${todayKey()}`;
-    const v = Number(localStorage.getItem(k) || "0");
+    const v = Number(localStorage.getItem(`usedCount:${todayKey()}`) || "0");
     setUsed(isNaN(v) ? 0 : v);
   }, []);
-  const bumpUsed = (inc: number) => {
+  const bumpUsed = (inc:number) => {
     const k = `usedCount:${todayKey()}`;
-    const cur = Number(localStorage.getItem(k) || "0");
-    const next = Math.min(GLOBAL_DAILY_LIMIT, cur + inc);
-    localStorage.setItem(k, String(next));
-    setUsed(next);
+    const next = Math.min(GLOBAL_DAILY_LIMIT, Number(localStorage.getItem(k) || "0") + inc);
+    localStorage.setItem(k, String(next)); setUsed(next);
   };
 
-  // exemplos pro tooltip do 10x
   const exampleDates10 = useMemo(() => {
     const base = parseBR(form.data);
-    const arr = [0,1,2].map(off => {
-      const d = new Date(base);
-      d.setDate(d.getDate() - off);
-      return fmtBR(d);
-    });
-    return arr.join(", ");
+    return [0,1,2].map(off => { const d=new Date(base); d.setDate(d.getDate()-off); return fmtBR(d); }).join(", ");
   }, [form.data]);
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setForm(prev => ({ ...prev, [name]: value }));
-    setErrors(prev => ({ ...prev, [name]: undefined }));
+    setForm(p => ({...p, [name]: value}));
+    setErrors(p => ({...p, [name]: undefined}));
   };
 
-  const validate = (): boolean => {
+  const validate = () => {
     const err: Partial<Record<keyof Form, string>> = {};
-    const req = (key: keyof Form) => { if (!String(form[key]||"").trim()) err[key] = "Esta pergunta é obrigatória."; };
-
-    req("classificacao");
-    req("empresa");
-    req("unidade");
-    req("data");
-    req("hora");
-    req("turno");
-    req("area");
-    req("setor");
-    req("atividade");
-    req("intervencao");
-    // cs numérico 10..999999999
-    if (!/^\d+$/.test(form.cs)) err.cs = "Esta pergunta é obrigatória.";
-    else {
-      const n = Number(form.cs);
-      if (n < 10 || n > 999999999) err.cs = "Informe um número entre 10 e 999999999.";
+    const req = (k: keyof Form) => { if (!String(form[k]||"").trim()) err[k]="Esta pergunta é obrigatória."; };
+    req("classificacao"); req("empresa"); req("unidade"); req("data"); req("hora"); req("turno");
+    req("area"); req("setor"); req("atividade"); req("intervencao");
+    if (!/^\d+$/.test(form.cs)) err.cs="Esta pergunta é obrigatória."; else {
+      const n=+form.cs; if(n<10||n>999999999) err.cs="Informe um número entre 10 e 999999999.";
     }
-    req("observacao");
-    req("descricao");
-    req("fiz");
-
-    setErrors(err);
-    return Object.keys(err).length === 0;
+    req("observacao"); req("descricao"); req("fiz");
+    setErrors(err); return Object.keys(err).length===0;
   };
 
-  // salva no hosting (rota serverless /api/save) ou baixa .json local se offline
-  async function saveToHostingOrDownload(payload: any) {
-    try {
-      const ctrl = new AbortController();
-      const id = setTimeout(()=>ctrl.abort(), 5000);
-      const res = await fetch("/api/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: ctrl.signal
-      });
-      clearTimeout(id);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return true;
-    } catch {
-      // fallback: baixar arquivo local
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `preenvio_${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(a.href);
+  async function saveToHostingOrDownload(payload:any){
+    try{
+      const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),5000);
+      const res=await fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:ctrl.signal});
+      clearTimeout(t); if(!res.ok) throw new Error(String(res.status)); return true;
+    }catch{
+      const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+      const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`preenvio_${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
       return false;
     }
   }
 
-  async function gerar(lote10: boolean) {
+  async function gerar(lote10:boolean){
     setLimitMsg(null);
-
-    if (!validate()) return;
-
+    if(!validate()) return;
     const desired = lote10 ? 10 : 1;
     if (used + desired > GLOBAL_DAILY_LIMIT) {
       setLimitMsg(`Limite diário alcançado (${used}/${GLOBAL_DAILY_LIMIT}). Tente novamente amanhã.`);
       return;
     }
-
-    setRunning(true);
-    setProgress(0);
-    setStep("Preparando dados...");
-
-    try {
-      const baseDate = parseBR(form.data);
-      const entries: any[] = [];
-      for (let i=0;i<desired;i++){
-        const d = new Date(baseDate);
-        if (lote10) d.setDate(d.getDate()-i);
-        entries.push({
-          ...form,
-          data: fmtBR(d),
-          createdAt: new Date().toISOString()
-        });
-        setProgress(Math.round(((i+1)/desired)*80)); // 0..80% enquanto prepara
+    setRunning(true); setProgress(0); setStep("Preparando dados...");
+    try{
+      const baseDate=parseBR(form.data);
+      const entries:any[]=[];
+      for(let i=0;i<desired;i++){
+        const d=new Date(baseDate); if(lote10) d.setDate(d.getDate()-i);
+        entries.push({...form,data:fmtBR(d),createdAt:new Date().toISOString()});
+        setProgress(Math.round(((i+1)/desired)*80));
       }
-
       setStep("Salvando pacote...");
-      const ok = await saveToHostingOrDownload({
-        kind: "preenvio-pack",
-        count: desired,
-        dayKey: todayKey(),
-        entries
-      });
-
-      setProgress(100);
-      setStep(ok ? "Pacote salvo na hospedagem." : "Download local gerado.");
-      bumpUsed(desired);
-    } catch (e:any) {
-      setStep(`Erro: ${e?.message||e}`);
-    } finally {
-      setTimeout(()=>{ setRunning(false); setStep(""); setProgress(0); }, 800);
-    }
+      const ok=await saveToHostingOrDownload({kind:"preenvio-pack",count:desired,dayKey:todayKey(),entries});
+      setProgress(100); setStep(ok?"Pacote salvo na hospedagem.":"Download local gerado."); bumpUsed(desired);
+    }catch(e:any){ setStep(`Erro: ${e?.message||e}`); }
+    finally{ setTimeout(()=>{ setRunning(false); setStep(""); setProgress(0); },800); }
   }
 
   return (
@@ -320,7 +233,6 @@ export default function PreEnvioForms() {
           </Field>
         </div>
 
-        {/* BOTÕES */}
         <div className="mt-6 flex flex-wrap gap-3 items-center">
           <button
             title="Gera um pacote (1x). Seu formulário será enviado posteriormente."
@@ -340,12 +252,9 @@ export default function PreEnvioForms() {
             Gerar lote (10x)
           </button>
 
-          <div className="text-sm text-gray-300">
-            Hoje: {used}/{GLOBAL_DAILY_LIMIT}
-          </div>
+          <div className="text-sm text-gray-300">Hoje: {used}/{GLOBAL_DAILY_LIMIT}</div>
         </div>
 
-        {/* PROGRESSO */}
         {running && (
           <div className="mt-6">
             <div className="h-2 bg-gray-700 rounded">
@@ -356,7 +265,6 @@ export default function PreEnvioForms() {
         )}
       </main>
 
-      {/* utilitários inline */}
       <style>{`
         .input { width:100%; padding:0.5rem 0.75rem; border-radius:0.375rem; background:#374151; outline:none; }
         .select { width:100%; padding:0.5rem 0.75rem; border-radius:0.375rem; background:#374151; outline:none; }
@@ -366,7 +274,6 @@ export default function PreEnvioForms() {
   );
 }
 
-/** ========= SUBCOMPONENTES ========= */
 function Field(props: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
@@ -375,7 +282,6 @@ function Field(props: { label: string; children: React.ReactNode }) {
     </div>
   );
 }
-
 function Error({ text }: { text?: string }) {
   if (!text) return null;
   return <div className="text-red-400 text-xs mt-1">{text}</div>;
