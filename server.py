@@ -1,4 +1,3 @@
-
 import os, json, traceback
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for
@@ -152,51 +151,46 @@ def fill_form(page, dados):
             opts.nth(i).click(); break
 
     # 4 Data
-    page.locator("xpath=//*[@id='question-list']/div[4]//input").fill(dados["data"])
+    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Data')]/following::input[1]").fill(dados["data"])
 
     # 5 Hora
-    page.locator("xpath=//*[@id='question-list']/div[5]//div[@role='button']").click()
+    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Hora')]/following::div[@role='button'][1]").click()
     opts = page.locator("span[aria-label]")
     for i in range(opts.count()):
         if opts.nth(i).get_attribute("aria-label") == dados["hora"]:
             opts.nth(i).click(); break
 
     # 6 Turno
-    page.locator("xpath=//*[@id='question-list']/div[6]//div[@role='button']").click()
+    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Turno')]/following::div[@role='button'][1]").click()
     opts = page.locator("span[aria-label]")
     for i in range(opts.count()):
         if opts.nth(i).get_attribute("aria-label") == dados["turno"]:
             opts.nth(i).click(); break
 
     # 7 Área
-    page.locator("xpath=//*[@id='question-list']/div[7]//div[@role='button']").click()
+    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Área')]/following::div[@role='button'][1]").click()
     opts = page.locator("span[aria-label]")
     for i in range(opts.count()):
         if opts.nth(i).get_attribute("aria-label") == dados["area"]:
             opts.nth(i).click(); break
 
-    # 8,9,10,11
-    page.locator("xpath=//*[@id='question-list']/div[8]//input").fill(dados["setor"])
-    page.locator("xpath=//*[@id='question-list']/div[9]//input").fill(dados["atividade"])
-    page.locator("xpath=//*[@id='question-list']/div[10]//input").fill(dados["intervencao"])
-    page.locator("xpath=//*[@id='question-list']/div[11]//input").fill(str(dados["cs"]))
+    # 8,9,10,11 campos de texto livres (ajuste conforme seu Forms)
+    page.locator("xpath=(//*[@id='question-list']//input)[1]").fill(dados["setor"])
+    page.locator("xpath=(//*[@id='question-list']//input)[2]").fill(dados["atividade"])
+    page.locator("xpath=(//*[@id='question-list']//input)[3]").fill(dados["intervencao"])
+    page.locator("xpath=(//*[@id='question-list']//input)[4]").fill(str(dados["cs"]))
 
     # 12 Observação
-    page.locator("xpath=//*[@id='question-list']/div[12]//div[@role='button']").click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["observacao"]:
-            opts.nth(i).click(); break
+    page.locator("xpath=//*[@id='question-list']//div[@role='button'][.//span[contains(@aria-label,'{}')]]".format(dados["observacao"])).click()
 
-    # 13 / 14
-    page.locator("xpath=//*[@id='question-list']/div[13]//textarea | //*[@id='question-list']/div[13]//input").fill(dados["descricao"])
-    page.locator("xpath=//*[@id='question-list']/div[14]//textarea | //*[@id='question-list']/div[14]//input").fill(dados["fiz"])
+    # 13 / 14 texto longo
+    page.locator("xpath=(//*[@id='question-list']//textarea | //*[@id='question-list']//input)[5]").fill(dados["descricao"])
+    page.locator("xpath=(//*[@id='question-list']//textarea | //*[@id='question-list']//input)[6]").fill(dados["fiz"])
 
     # Submeter
-    # Alguns forms usam 'Enviar', outros 'Submeter'
     submit_btn = page.locator("button:has-text('Enviar')")
     if submit_btn.count() == 0:
-        submit_btn = page.locator(\"button:has-text('Submeter')\")
+        submit_btn = page.locator("button:has-text('Submeter')")
     submit_btn.click()
 
 @app.post("/send")
@@ -219,7 +213,7 @@ def send_once():
             "setor": form.get("setor").strip(),
             "atividade": form.get("atividade").strip(),
             "intervencao": form.get("intervencao").strip(),
-            "cs": int(form.get("cs").strip()),
+            "cs": int(form.get("cs").strip() or "0"),
             "observacao": form.get("observacao").strip(),
             "descricao": form.get("descricao").strip(),
             "fiz": form.get("fiz").strip(),
@@ -229,7 +223,6 @@ def send_once():
 
         # Persist last values and lists
         st["last_values"] = dados.copy()
-        st["last_values"].pop("form_url", None)  # guardamos abaixo
         st["last_values"]["form_url"] = dados["form_url"]
         if dados["setor"] and dados["setor"] not in st["setor"]:
             st["setor"].append(dados["setor"])
@@ -248,7 +241,6 @@ def send_once():
             page = browser.new_page()
             page.goto(dados["form_url"])
             fill_form(page, dados)
-            # Após enviar, tentar voltar para 'Enviar outra resposta' apenas para consistência
             try:
                 page.locator("text=Enviar outra resposta").click()
             except Exception:
@@ -280,7 +272,7 @@ def send_ten():
             "setor": form.get("setor").strip(),
             "atividade": form.get("atividade").strip(),
             "intervencao": form.get("intervencao").strip(),
-            "cs": int(form.get("cs").strip()),
+            "cs": int(form.get("cs").strip() or "0"),
             "observacao": form.get("observacao").strip(),
             "descricao": form.get("descricao").strip(),
             "fiz": form.get("fiz").strip(),
@@ -288,7 +280,6 @@ def send_ten():
         if not (10 <= dados["cs"] <= 999_999_999):
             return jsonify({"ok": False, "detail": "CS deve estar entre 10 e 999999999"}), 400
 
-        # Persist basics
         st["last_values"].update({k: v for k, v in dados.items() if k != "form_url"})
         st["last_values"]["form_url"] = dados["form_url"]
         if dados["setor"] and dados["setor"] not in st["setor"]:
@@ -313,11 +304,10 @@ def send_ten():
                 dados_round["data"] = d.strftime("%d/%m/%Y")
                 fill_form(page, dados_round)
                 sent += 1
-                # após enviar, clicar em 'Enviar outra resposta' para recomeçar na mesma aba
                 page.locator("text=Enviar outra resposta").click()
                 page.wait_for_selector("xpath=//*[@id='question-list']/div[1]//div[@role='button']")
+            browser.close()
 
-        # atualizar contadores
         if dados["intervencao"]:
             st = load_store()
             st["intervencao_counts"][dados["intervencao"]] = st["intervencao_counts"].get(dados["intervencao"], 0) + sent

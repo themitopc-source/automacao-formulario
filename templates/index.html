@@ -1,218 +1,128 @@
-
 <!doctype html>
 <html lang="pt-br">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Automatizador de Formulários (Web)</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <title>Automatizador Web (Flask + Playwright)</title>
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <div class="wrap">
-    <h1>Automatizador de Formulários (Web)</h1>
+<div class="container">
+  <h1>Automatizador Web <small>(Flask + Playwright)</small></h1>
 
-    <section class="card">
-      <h3>Licença</h3>
-      <div class="row">
-        <input id="key" placeholder="Digite: TheMito (30d) ou TheMito10 (90d)" />
-        <button onclick="validar()">Validar</button>
-        <span id="lic-status" class="{{ 'ok' if lic_ok else 'err' }}">
-          {{ 'Licença ativa' if lic_ok else 'Licença necessária' }}
-        </span>
-      </div>
-    </section>
+  <section class="card">
+    <h2>Licença</h2>
+    <div id="lic-status" class="muted">Validar com THEMITO (30d) ou THEMITO10 (90d).</div>
+    <form id="lic-form" onsubmit="return false;">
+      <input id="lic-key" placeholder="Insira a chave" />
+      <button onclick="validateLicense()">Validar licença</button>
+    </form>
+  </section>
 
-    <section class="card">
-      <h3>Dados do Formulário</h3>
-      <form id="f" onsubmit="return false;">
-        <label>URL do Forms</label>
-        <input name="form_url" value="{{ st.last_values.form_url }}" />
+  <section class="card">
+    <h2>Envio único</h2>
+    <form id="form-send" onsubmit="return false;">
+      <label>URL do Form:<input name="form_url" value="{{ st.last_values.form_url }}"/></label>
+      <label>Classificação:<input name="classificacao" value="{{ st.last_values.classificacao }}"/></label>
+      <label>Empresa:<input name="empresa" value="{{ st.last_values.empresa }}"/></label>
+      <label>Unidade:
+        <select name="unidade">
+          {% for u in unidades %}
+            <option value="{{u}}" {% if u == st.last_values.unidade %}selected{% endif %}>{{u}}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Data:<input name="data" value="{{ st.last_values.data }}"/></label>
+      <label>Hora:
+        <select name="hora">
+          {% for h in hora_opts %}
+            <option value="{{h}}" {% if h == st.last_values.hora %}selected{% endif %}>{{h}}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Turno:<input name="turno" value="{{ st.last_values.turno }}"/></label>
+      <label>Área:
+        <select name="area">
+          {% for a in areas %}
+            <option value="{{a}}" {% if a == st.last_values.area %}selected{% endif %}>{{a}}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Setor:<input name="setor" value="{{ st.last_values.setor }}"/></label>
+      <label>Atividade:<input name="atividade" value="{{ st.last_values.atividade }}"/></label>
+      <label>Intervenção:<input name="intervencao" value="{{ st.last_values.intervencao }}"/></label>
+      <label>CS:<input name="cs" value="{{ st.last_values.cs }}"/></label>
+      <label>Observação:
+        <select name="observacao">
+          {% for o in obs_opts %}
+            <option value="{{o}}" {% if o == st.observacao[0] %}selected{% endif %}>{{o}}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Descrição:<textarea name="descricao">{{ st.last_values.descricao }}</textarea></label>
+      <label>Fiz:<textarea name="fiz">{{ st.last_values.fiz }}</textarea></label>
+      <button onclick="sendOnce()">Preencher e Enviar</button>
+    </form>
+  </section>
 
-        <div class="grid">
-          <div>
-            <label>1. Classificação</label>
-            <select name="classificacao">
-              {% for opt in ["Quase acidente","Comportamento inseguro","Condição insegura"] %}
-              <option value="{{opt}}" {{ 'selected' if st.last_values.classificacao==opt else '' }}>{{opt}}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>2. Empresa</label>
-            <select name="empresa">
-              {% for opt in ["Raízen","Contratada"] %}
-              <option value="{{opt}}" {{ 'selected' if st.last_values.empresa==opt else '' }}>{{opt}}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>3. Unidade</label>
-            <select name="unidade">
-              {% for u in unidades %}
-              <option value="{{u}}" {{ 'selected' if st.last_values.unidade==u else '' }}>{{u}}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>4. Data (dd/mm/aaaa)</label>
-            <input name="data" value="{{ st.last_values.data }}">
-          </div>
-          <div>
-            <label>5. Hora</label>
-            <select name="hora">
-              {% for h in hora_opts %}
-              <option value="{{h}}" {{ 'selected' if st.last_values.hora==h else '' }}>{{h}}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>6. Turno</label>
-            <select name="turno">
-              {% for t in ["A","B","C"] %}
-              <option value="{{t}}" {{ 'selected' if st.last_values.turno==t else '' }}>{{t}}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>7. Área</label>
-            <select name="area">
-              {% for a in ["Adm","Agr","Alm","Aut","Biogás","E2G","Ind"] %}
-              <option value="{{a}}" {{ 'selected' if st.last_values.area==a else '' }}>{{a}}</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
+  <section class="card">
+    <h2>Enviar 10x (datas regressivas)</h2>
+    <form id="form-send10" onsubmit="return false;">
+      <!-- reutiliza os mesmos campos do form acima via JS -->
+      <button onclick="sendTen()">10x</button>
+    </form>
+  </section>
 
-        <div class="grid">
-          <div>
-            <label>8. Setor</label>
-            <input list="setores" name="setor" value="{{ st.last_values.setor }}">
-            <datalist id="setores">
-              {% for s in st.setor %}<option value="{{s}}">{% endfor %}
-            </datalist>
-            <button class="x" type="button" onclick="rem('setor', document.querySelector('[name=setor]').value)">X</button>
-          </div>
-          <div>
-            <label>9. Atividade</label>
-            <input list="ativs" name="atividade" value="{{ st.last_values.atividade }}">
-            <datalist id="ativs">
-              {% for s in st.atividade %}<option value="{{s}}">{% endfor %}
-            </datalist>
-            <button class="x" type="button" onclick="rem('atividade', document.querySelector('[name=atividade]').value)">X</button>
-          </div>
-          <div>
-            <label>10. Intervenção</label>
-            <input list="intervs" name="intervencao" value="{{ st.last_values.intervencao }}" oninput="autoCS(this.value)">
-            <datalist id="intervs">
-              {% for s in st.intervencao %}<option value="{{s}}">{% endfor %}
-            </datalist>
-            <button class="x" type="button" onclick="rem('intervencao', document.querySelector('[name=intervencao]').value)">X</button>
-            <small>Enviada: <b id="count">
-              {{ st.intervencao_counts.get(st.last_values.intervencao, 0) if st.last_values.intervencao else 0 }}
-            </b></small>
-          </div>
-          <div>
-            <label>11. CS (10..999999999)</label>
-            <input name="cs" value="{{ st.last_values.cs }}">
-          </div>
-          <div>
-            <label>12. Observação</label>
-            <select name="observacao">
-              {% for o in obs_opts %}
-              <option value="{{o}}" {{ 'selected' if st.last_values.observacao==o else '' }}>{{o}}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>13. Descrição</label>
-            <input name="descricao" value="{{ st.last_values.descricao }}" placeholder="introduza a sua resposta">
-          </div>
-          <div>
-            <label>14. O que eu fiz</label>
-            <input name="fiz" value="{{ st.last_values.fiz }}" placeholder="introduza a sua resposta">
-          </div>
-        </div>
+  <section class="card">
+    <h2>Dados salvos (/saved)</h2>
+    <button onclick="fetchSaved()">Ver JSON</button>
+    <pre id="saved-json" class="code"></pre>
+  </section>
+</div>
 
-        <div class="row">
-          <button id="btn1" onclick="sendOnce()">Preencher e Enviar</button>
-          <button id="btn10" onclick="send10()">10x (datas regressivas)</button>
-        </div>
-      </form>
-      <pre id="log"></pre>
-    </section>
-  </div>
+<script>
+async function validateLicense(){
+  const key = document.getElementById('lic-key').value.trim();
+  const r = await fetch('/license/validate', {method:'POST', body: new URLSearchParams({key})});
+  const j = await r.json();
+  const el = document.getElementById('lic-status');
+  if(j.ok){
+    el.textContent = 'Licença válida até: ' + j.expires;
+    el.className = 'ok';
+  }else{
+    el.textContent = 'Licença inválida';
+    el.className = 'err';
+  }
+}
 
-  <script>
-    async function validar(){
-      const key = document.getElementById('key').value;
-      const r = await fetch('/license/validate', {
-        method:'POST',
-        headers:{'Content-Type':'application/x-www-form-urlencoded'},
-        body: new URLSearchParams({key})
-      });
-      const j = await r.json();
-      const el = document.getElementById('lic-status');
-      if(r.ok){ el.textContent = 'Licença ativa até ' + (new Date(j.expires)).toLocaleString(); el.className='ok'; }
-      else { el.textContent = j.detail || 'Erro'; el.className='err'; }
-    }
+function formToParams(formId){
+  const f = document.getElementById(formId) || document.getElementById('form-send');
+  const data = new FormData(f);
+  // pega também campos do form principal (caso chame do 10x)
+  const main = new FormData(document.getElementById('form-send'));
+  for (const [k,v] of main.entries()) if(!data.has(k)) data.append(k,v);
+  return new URLSearchParams(data);
+}
 
-    async function rem(field, value){
-      if(!value) return;
-      await fetch('/delete_value', {
-        method:'POST',
-        headers:{'Content-Type':'application/x-www-form-urlencoded'},
-        body:new URLSearchParams({field, value})
-      });
-      location.reload();
-    }
+async function sendOnce(){
+  const params = formToParams('form-send');
+  const r = await fetch('/send', {method:'POST', body: params});
+  const j = await r.json();
+  alert(JSON.stringify(j));
+}
 
-    async function sendOnce(){
-      setLoading(true);
-      const form = document.getElementById('f');
-      const fd = new FormData(form);
-      try{
-        const r = await fetch('/send', {method:'POST', body: fd});
-        const j = await r.json();
-        log(JSON.stringify(j, null, 2));
-        if(j.ok){
-          document.getElementById('count').textContent = j.count;
-        }
-      }catch(e){ log('Erro: '+e); }
-      setLoading(false);
-    }
+async function sendTen(){
+  const params = formToParams('form-send10');
+  const r = await fetch('/send10', {method:'POST', body: params});
+  const j = await r.json();
+  alert(JSON.stringify(j));
+}
 
-    async function send10(){
-      setLoading(true);
-      const form = document.getElementById('f');
-      const fd = new FormData(form);
-      try{
-        const r = await fetch('/send10', {method:'POST', body: fd});
-        const j = await r.json();
-        log(JSON.stringify(j, null, 2));
-        if(j.ok){
-          document.getElementById('count').textContent = j.count;
-        }
-      }catch(e){ log('Erro: '+e); }
-      setLoading(false);
-    }
-
-    async function autoCS(name){
-      if(!name) return;
-      const r = await fetch('/saved');
-      const st = await r.json();
-      if(st.intervencao_cs_map && st.intervencao_cs_map[name]){
-        document.querySelector('[name=cs]').value = st.intervencao_cs_map[name];
-      }
-    }
-
-    function log(msg){
-      const el = document.getElementById('log');
-      el.textContent += msg + "\\n";
-    }
-    function setLoading(x){
-      document.getElementById('btn1').disabled = x;
-      document.getElementById('btn10').disabled = x;
-    }
-  </script>
+async function fetchSaved(){
+  const r = await fetch('/saved');
+  const j = await r.json();
+  document.getElementById('saved-json').textContent = JSON.stringify(j, null, 2);
+}
+</script>
 </body>
 </html>
