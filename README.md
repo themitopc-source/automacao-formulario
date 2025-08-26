@@ -1,20 +1,25 @@
-# Automatizador Web (Flask + Playwright) — pronto para Render (Docker)
+# Coletor de Dados (Hospedado) — Para envio local depois
 
-## Passos
-1) Suba esta pasta para um repositório no GitHub.
-2) No Render, crie via **New → Blueprint** (apontando para este repo) ou **New → Web Service → Docker**.
-3) Um disco persistente será montado em **/data** (para `saved_fields.json`).
-4) Acesse a URL pública e valide sua licença (**THEMITO = 30d**, **THEMITO10 = 90d**).
-5) Preencha os campos e clique em **“Preencher e Enviar”** ou **“10x”**.
+Este app hospeda uma página idêntica em espírito à do programa, mas **somente salva os dados** para envio posterior na sua máquina.
 
-### Observações
-- A imagem base é a oficial do Playwright para **Python 3.12** (tag `v1.46.0-jammy`), com Chromium headless funcional.
-- Para restaurar/limpar dados, apague `/data/saved_fields.json`.
-- Porta padrão: `PORT` do Render (propagado para o Flask em `server.py`).
+- Validação: só salva se *todos os campos* estiverem preenchidos corretamente.
+- UX: mostra círculo **Enviando...** e depois **Enviado! (dados salvos)**.
+- Armazenamento: SQLite em `STORE_DIR` (padrão `/data`), compatível com Docker/Render.
+  - Plano Free: use `STORE_DIR=/tmp` (sem persistência); baixe os dados via export.
+- Export: `/export.json` e `/export.csv` (use `ADMIN_TOKEN` para proteger: `?token=SEU_TOKEN`).
 
-## Rodar localmente
+## Executar localmente
 ```bash
 pip install -r requirements.txt
+export STORE_DIR=./data
 python server.py
-# Acesse http://localhost:8000
+# abre http://localhost:10000
+```
+
+## Deploy no Render
+- **Dockerfile Path**: `./Dockerfile`
+- **Health check**: `/health`
+- **Env vars**:
+  - `STORE_DIR=/tmp` (Free) ou disco montado em `/data` (planos pagos)
+  - `ADMIN_TOKEN=<opcional>` para proteger export
 ```

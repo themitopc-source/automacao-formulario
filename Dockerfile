@@ -8,5 +8,5 @@ RUN pip install --upgrade pip setuptools wheel \
 
 COPY . .
 
-EXPOSE 8000
-CMD ["python", "server.py"]
+# Start with Gunicorn (Flask app)
+CMD ["sh","-lc","gunicorn -w 2 -k gthread -b 0.0.0.0:${PORT:-10000} server:app"]

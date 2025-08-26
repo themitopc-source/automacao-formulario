@@ -1,328 +1,143 @@
-import os, json, traceback
-from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from playwright.sync_api import sync_playwright
+\
+import os, sqlite3, csv, io, json
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, send_file, abort
 
-# ---------- Persistence ----------
 STORE_DIR = os.environ.get("STORE_DIR", "/data")
 os.makedirs(STORE_DIR, exist_ok=True)
-STORE_PATH = os.path.join(STORE_DIR, "saved_fields.json")
+DB_PATH = os.path.join(STORE_DIR, "submissions.db")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")  # optional simple auth for exports
 
-LICENSE_KEY_CONFIG = {"THEMITO": 30, "THEMITO10": 90}
-
-OBSERVACOES = [
-    "Condição estrutural do equipamento","Condição estrutural do local",
-    "Construção civil","COVID","Descarte de lixo","Direção segura",
-    "Elevação e movimentação de carga","Espaço Confinado","LOTO",
-    "Meio Ambiente - Fumaça Preta","Meio Ambiente - Resíduos",
-    "Meio Ambiente - Vazamentos","Meio Ambiente - Vinhaça",
-    "Mov. cargas e interface Homem Máquina","Permissão de Serviços e procedimentos",
-    "Regra dos três pontos","Segurança de processo (Aplicável na Indústria)",
-    "Serviço elétrico","Serviços a quente","Trabalho em Altura",
-    "Uso de EPIS","5S"
+REQUIRED_FIELDS = [
+    "classificacao","empresa","unidade","data","hora","turno","area",
+    "setor","atividade","intervencao","cs","observacao","descricao","fiz"
 ]
 
-UNIDADES = [
-    "Araraquara","Barra","Benalcool","Bonfim","Caarapó","Continental","Costa Pinto",
-    "Destivale","Diamante","Dois Córregos","Gasa","Ipaussu","Jataí","Junqueira",
-    "Lagoa da Prata","Leme","Maracaí","MB","Mundial","Paraguaçú","Paraíso",
-    "Passa Tempo","Rafard","Rio Brilhante","Santa Cândida","Santa Elisa",
-    "Santa Helena","São Francisco","Serra","Tarumã","Univalem","Vale do Rosário"
-]
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def load_store():
-    if os.path.exists(STORE_PATH):
-        try:
-            with open(STORE_PATH, "r", encoding="utf-8") as f:
-                d = json.load(f)
-        except Exception:
-            d = {}
-    else:
-        d = {}
-    d.setdefault("setor", [])
-    d.setdefault("atividade", [])
-    d.setdefault("intervencao", [])
-    d.setdefault("intervencao_cs_map", {})
-    d.setdefault("observacao", OBSERVACOES[:1])
-    d.setdefault("intervencao_counts", {})
-    d.setdefault("last_values", {
-        "classificacao": "Quase acidente",
-        "empresa": "Raízen",
-        "unidade": "Vale do Rosário",
-        "data": datetime.now().strftime("%d/%m/%Y"),
-        "hora": "08:00",
-        "turno": "A",
-        "area": "Adm",
-        "setor": "",
-        "atividade": "",
-        "intervencao": "",
-        "cs": "",
-        "observacao": OBSERVACOES[0],
-        "descricao": "",
-        "fiz": "",
-        "form_url": "https://forms.office.com/Pages/ResponsePage.aspx?id=phHE5xOQZ0mlsT0I-e3BPm4ZyCW04uxHi5LaP7rueIFURFdHNDFISEZVSUc4MFc4TEJOWVpJSTRWOSQlQCN0PWcu",
-    })
-    d.setdefault("license_key", "")
-    d.setdefault("license_expiry", "")
-    return d
+def init_db():
+    conn = get_conn()
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS submissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        classificacao TEXT NOT NULL,
+        empresa TEXT NOT NULL,
+        unidade TEXT NOT NULL,
+        data TEXT NOT NULL,
+        hora TEXT NOT NULL,
+        turno TEXT NOT NULL,
+        area TEXT NOT NULL,
+        setor TEXT NOT NULL,
+        atividade TEXT NOT NULL,
+        intervencao TEXT NOT NULL,
+        cs INTEGER NOT NULL,
+        observacao TEXT NOT NULL,
+        descricao TEXT NOT NULL,
+        fiz TEXT NOT NULL
+    )
+    """)
+    conn.commit()
+    conn.close()
 
-def save_store(d):
-    with open(STORE_PATH, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=2)
-
-def license_ok(d):
+def validate_payload(d):
+    # All fields present and non-empty
+    for f in REQUIRED_FIELDS:
+        v = (d.get(f) or "").strip()
+        if not v:
+            return False, f"Campo obrigatório ausente: {f}"
+    # CS numeric range
     try:
-        if not d.get("license_key") or not d.get("license_expiry"):
-            return False
-        return datetime.fromisoformat(d["license_expiry"]) >= datetime.now()
+        cs = int(d["cs"])
+        if not (10 <= cs <= 999_999_999):
+            return False, "CS deve estar entre 10 e 999999999"
     except Exception:
-        return False
+        return False, "CS deve ser numérico"
+    # Data formato dd/mm/aaaa (básico)
+    try:
+        datetime.strptime(d["data"], "%d/%m/%Y")
+    except Exception:
+        return False, "Data inválida (use dd/mm/aaaa)"
+    # Hora HH:MM simples
+    hhmm = d["hora"]
+    if len(hhmm) not in (4,5) or ":" not in hhmm:
+        return False, "Hora inválida (use HH:MM)"
+    return True, None
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def home():
-    st = load_store()
-    return render_template("index.html",
-                           st=st,
-                           obs_opts=OBSERVACOES,
-                           unidades=UNIDADES,
-                           hora_opts=[f"{h:02d}:{m:02d}" for h in range(24) for m in (0,30)],
-                           areas=["Adm","Agr","Alm","Aut","Biogás","E2G","Ind"],
-                           lic_ok=license_ok(st))
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-@app.post("/license/validate")
-def validate_license():
-    st = load_store()
-    key = (request.form.get("key") or "").strip().upper()
-    days = LICENSE_KEY_CONFIG.get(key)
-    if not days:
-        return jsonify({"ok": False, "detail": "Chave inválida"}), 400
-    expiry = (datetime.now() + timedelta(days=days)).isoformat()
-    st["license_key"] = key
-    st["license_expiry"] = expiry
-    save_store(st)
-    return jsonify({"ok": True, "expires": expiry})
-
-@app.post("/delete_value")
-def delete_value():
-    st = load_store()
-    field = request.form.get("field")
-    value = request.form.get("value", "")
-    if field not in {"setor","atividade","intervencao"}:
-        return jsonify({"ok": False, "detail": "Campo inválido"}), 400
-
-    if field == "intervencao":
-        if value in st["intervencao"]:
-            st["intervencao"].remove(value)
-        st["intervencao_cs_map"].pop(value, None)
-        st["intervencao_counts"].pop(value, None)
-    else:
-        lst = st[field]
-        if value in lst:
-            lst.remove(value)
-
-    save_store(st)
+@app.post("/api/submit")
+def api_submit():
+    data = {k:(request.form.get(k) or "").strip() for k in REQUIRED_FIELDS}
+    ok, err = validate_payload(data)
+    if not ok:
+        return jsonify({"ok": False, "detail": err}), 400
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO submissions
+        (created_at, classificacao, empresa, unidade, data, hora, turno, area, setor, atividade,
+         intervencao, cs, observacao, descricao, fiz)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        datetime.utcnow().isoformat(),
+        data["classificacao"], data["empresa"], data["unidade"], data["data"], data["hora"],
+        data["turno"], data["area"], data["setor"], data["atividade"], data["intervencao"],
+        int(data["cs"]), data["observacao"], data["descricao"], data["fiz"]
+    ))
+    conn.commit()
+    conn.close()
     return jsonify({"ok": True})
 
-def fill_form(page, dados):
-    # Espera a primeira pergunta aparecer
-    page.wait_for_selector("xpath=//*[@id='question-list']/div[1]//div[@role='button']")
+def require_admin():
+    if not ADMIN_TOKEN:
+        return True
+    token = request.args.get("token") or request.headers.get("X-Admin-Token") or ""
+    return token == ADMIN_TOKEN
 
-    # 1 Classificação
-    page.locator("xpath=//*[@id='question-list']/div[1]//div[@role='button']").first.click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["classificacao"]:
-            opts.nth(i).click(); break
+@app.get("/export.json")
+def export_json():
+    if not require_admin():
+        abort(401)
+    conn = get_conn()
+    cur = conn.execute("SELECT * FROM submissions ORDER BY id DESC")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return jsonify(rows)
 
-    # 2 Empresa
-    page.locator("xpath=//*[@id='question-list']/div[2]//div[@role='button']").first.click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["empresa"]:
-            opts.nth(i).click(); break
+@app.get("/export.csv")
+def export_csv():
+    if not require_admin():
+        abort(401)
+    conn = get_conn()
+    cur = conn.execute("SELECT * FROM submissions ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
 
-    # 3 Unidade
-    page.locator("xpath=//*[@id='question-list']/div[3]//div[@role='button']").first.click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["unidade"]:
-            opts.nth(i).click(); break
+    if not rows:
+        return send_file(io.BytesIO(b""), mimetype="text/csv", as_attachment=True, download_name="submissions.csv")
 
-    # 4 Data
-    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Data')]/following::input[1]").fill(dados["data"])
+    output = io.StringIO()
+    writer = csv.writer(output)
+    header = rows[0].keys()
+    writer.writerow(header)
+    for r in rows:
+        writer.writerow([r[k] for k in header])
+    mem = io.BytesIO(output.getvalue().encode("utf-8"))
+    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="submissions.csv")
 
-    # 5 Hora
-    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Hora')]/following::div[@role='button'][1]").click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["hora"]:
-            opts.nth(i).click(); break
-
-    # 6 Turno
-    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Turno')]/following::div[@role='button'][1]").click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["turno"]:
-            opts.nth(i).click(); break
-
-    # 7 Área
-    page.locator("xpath=//*[@id='question-list']/div/label[contains(.,'Área')]/following::div[@role='button'][1]").click()
-    opts = page.locator("span[aria-label]")
-    for i in range(opts.count()):
-        if opts.nth(i).get_attribute("aria-label") == dados["area"]:
-            opts.nth(i).click(); break
-
-    # 8,9,10,11 campos de texto livres (ajuste conforme seu Forms)
-    page.locator("xpath=(//*[@id='question-list']//input)[1]").fill(dados["setor"])
-    page.locator("xpath=(//*[@id='question-list']//input)[2]").fill(dados["atividade"])
-    page.locator("xpath=(//*[@id='question-list']//input)[3]").fill(dados["intervencao"])
-    page.locator("xpath=(//*[@id='question-list']//input)[4]").fill(str(dados["cs"]))
-
-    # 12 Observação
-    page.locator("xpath=//*[@id='question-list']//div[@role='button'][.//span[contains(@aria-label,'{}')]]".format(dados["observacao"])).click()
-
-    # 13 / 14 texto longo
-    page.locator("xpath=(//*[@id='question-list']//textarea | //*[@id='question-list']//input)[5]").fill(dados["descricao"])
-    page.locator("xpath=(//*[@id='question-list']//textarea | //*[@id='question-list']//input)[6]").fill(dados["fiz"])
-
-    # Submeter
-    submit_btn = page.locator("button:has-text('Enviar')")
-    if submit_btn.count() == 0:
-        submit_btn = page.locator("button:has-text('Submeter')")
-    submit_btn.click()
-
-@app.post("/send")
-def send_once():
-    st = load_store()
-    if not license_ok(st):
-        return jsonify({"ok": False, "detail": "Licença inválida/expirada"}), 403
-
-    form = request.form
-    try:
-        dados = {
-            "form_url": form.get("form_url").strip(),
-            "classificacao": form.get("classificacao").strip(),
-            "empresa": form.get("empresa").strip(),
-            "unidade": form.get("unidade").strip(),
-            "data": form.get("data").strip(),
-            "hora": form.get("hora").strip(),
-            "turno": form.get("turno").strip(),
-            "area": form.get("area").strip(),
-            "setor": form.get("setor").strip(),
-            "atividade": form.get("atividade").strip(),
-            "intervencao": form.get("intervencao").strip(),
-            "cs": int(form.get("cs").strip() or "0"),
-            "observacao": form.get("observacao").strip(),
-            "descricao": form.get("descricao").strip(),
-            "fiz": form.get("fiz").strip(),
-        }
-        if not (10 <= dados["cs"] <= 999_999_999):
-            return jsonify({"ok": False, "detail": "CS deve estar entre 10 e 999999999"}), 400
-
-        # Persist last values and lists
-        st["last_values"] = dados.copy()
-        st["last_values"]["form_url"] = dados["form_url"]
-        if dados["setor"] and dados["setor"] not in st["setor"]:
-            st["setor"].append(dados["setor"])
-        if dados["atividade"] and dados["atividade"] not in st["atividade"]:
-            st["atividade"].append(dados["atividade"])
-        if dados["intervencao"]:
-            if dados["intervencao"] not in st["intervencao"]:
-                st["intervencao"].append(dados["intervencao"])
-            st["intervencao_cs_map"][dados["intervencao"]] = str(dados["cs"])
-            st["intervencao_counts"][dados["intervencao"]] = st["intervencao_counts"].get(dados["intervencao"], 0) + 1
-        st["observacao"] = [dados["observacao"]]
-        save_store(st)
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(dados["form_url"])
-            fill_form(page, dados)
-            try:
-                page.locator("text=Enviar outra resposta").click()
-            except Exception:
-                pass
-            browser.close()
-
-        return jsonify({"ok": True, "count": st["intervencao_counts"].get(dados["intervencao"], 0)})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"ok": False, "detail": f"Erro: {e}"}), 500
-
-@app.post("/send10")
-def send_ten():
-    st = load_store()
-    if not license_ok(st):
-        return jsonify({"ok": False, "detail": "Licença inválida/expirada"}), 403
-
-    form = request.form
-    try:
-        base_data = datetime.strptime(form.get("data").strip(), "%d/%m/%Y")
-        dados = {
-            "form_url": form.get("form_url").strip(),
-            "classificacao": form.get("classificacao").strip(),
-            "empresa": form.get("empresa").strip(),
-            "unidade": form.get("unidade").strip(),
-            "hora": form.get("hora").strip(),
-            "turno": form.get("turno").strip(),
-            "area": form.get("area").strip(),
-            "setor": form.get("setor").strip(),
-            "atividade": form.get("atividade").strip(),
-            "intervencao": form.get("intervencao").strip(),
-            "cs": int(form.get("cs").strip() or "0"),
-            "observacao": form.get("observacao").strip(),
-            "descricao": form.get("descricao").strip(),
-            "fiz": form.get("fiz").strip(),
-        }
-        if not (10 <= dados["cs"] <= 999_999_999):
-            return jsonify({"ok": False, "detail": "CS deve estar entre 10 e 999999999"}), 400
-
-        st["last_values"].update({k: v for k, v in dados.items() if k != "form_url"})
-        st["last_values"]["form_url"] = dados["form_url"]
-        if dados["setor"] and dados["setor"] not in st["setor"]:
-            st["setor"].append(dados["setor"])
-        if dados["atividade"] and dados["atividade"] not in st["atividade"]:
-            st["atividade"].append(dados["atividade"])
-        if dados["intervencao"]:
-            if dados["intervencao"] not in st["intervencao"]:
-                st["intervencao"].append(dados["intervencao"])
-            st["intervencao_cs_map"][dados["intervencao"]] = str(dados["cs"])
-        st["observacao"] = [dados["observacao"]]
-        save_store(st)
-
-        sent = 0
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(dados["form_url"])
-            for i in range(10):
-                d = base_data - timedelta(days=i)
-                dados_round = dados.copy()
-                dados_round["data"] = d.strftime("%d/%m/%Y")
-                fill_form(page, dados_round)
-                sent += 1
-                page.locator("text=Enviar outra resposta").click()
-                page.wait_for_selector("xpath=//*[@id='question-list']/div[1]//div[@role='button']")
-            browser.close()
-
-        if dados["intervencao"]:
-            st = load_store()
-            st["intervencao_counts"][dados["intervencao"]] = st["intervencao_counts"].get(dados["intervencao"], 0) + sent
-            save_store(st)
-
-        return jsonify({"ok": True, "sent": sent, "count": st["intervencao_counts"].get(dados['intervencao'], 0)})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"ok": False, "detail": f"Erro: {e}"}), 500
-
-@app.get("/saved")
-def get_saved():
-    st = load_store()
-    return jsonify(st)
+@app.get("/health")
+def health():
+    return "ok"
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    init_db()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")), debug=False)
+else:
+    init_db()
