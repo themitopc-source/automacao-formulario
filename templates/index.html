@@ -2,13 +2,17 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Automatizador</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>Automatizador de Formulário</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <h1>Automatizador de Formulário</h1>
-        <p>Projeto básico Flask hospedável no Render.</p>
-    </div>
+    <h1>Automatizador de Formulário</h1>
+    <form action="/" method="post">
+        <label for="nome">Nome:</label>
+        <input type="text" name="nome" id="nome" required>
+        <label for="email">Email:</label>
+        <input type="email" name="email" id="email" required>
+        <button type="submit">Enviar</button>
+    </form>
 </body>
 </html>
