@@ -1,28 +1,80 @@
-﻿import React, { useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/** ============== LISTAS (do seu código antigo) ============== */
-const CLASSIFICACOES = ["Selecione…","Quase acidente","Comportamento inseguro","Condição insegura"];
-const EMPRESAS = ["Selecione…","Raízen","Contratada"];
+/** ========= LICENÇAS =========
+ * Chaves aceitas (case-insensitive):
+ *  - TheMito10    → limite diário: 10
+ *  - TheMito50*   → limite diário: 50
+ *  - TheMito100#  → limite diário: 100
+ * A validação bloqueia o formulário até a chave ser aceita.
+ * O limite é por dispositivo/navegador e reinicia a cada dia.
+ */
+const LICENSES: Record<string, number> = {
+  "THEMITO10": 10,
+  "THEMITO50*": 50,
+  "THEMITO100#": 100,
+};
+
+const LS_KEYS = {
+  usedCounter: "pef_used_counter",           // { date: "YYYY-MM-DD", used: number }
+  license: "pef_license",                    // { key: string, limit: number, validatedAt: ISO }
+  savedSetores: "pef_saved_setores",         // string[]
+  savedAtividades: "pef_saved_atividades",   // string[]
+};
+
+function todayKey() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function loadJSON<T>(k: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(k);
+    if (!raw) return fallback;
+    const v = JSON.parse(raw);
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJSON(k: string, v: unknown) {
+  localStorage.setItem(k, JSON.stringify(v));
+}
+
+function upsertToArray(arr: string[], value: string, max = 50) {
+  const v = value.trim();
+  if (!v) return arr.slice();
+  const exists = arr.some((x) => x.toLowerCase() === v.toLowerCase());
+  const next = exists ? arr.slice() : [v, ...arr];
+  return next.slice(0, max);
+}
+
+/** ========= LISTAS E OPÇÕES ========= */
+const CLASSIFICACOES = ["Quase acidente", "Comportamento inseguro", "Condição insegura"] as const;
+const EMPRESAS = ["Raízen", "Contratada"] as const;
+
+// Unidades (inclui "Vale do Rosário")
 const UNIDADES = [
-  "Selecione…",
   "Araraquara","Barra","Benalcool","Bonfim","Caarapó","Continental","Costa Pinto",
   "Destivale","Diamante","Dois Córregos","Gasa","Ipaussu","Jataí","Junqueira",
   "Lagoa da Prata","Leme","Maracaí","MB","Mundial","Paraguaçú","Paraíso",
   "Passa Tempo","Rafard","Rio Brilhante","Santa Cândida","Santa Elisa",
   "Santa Helena","São Francisco","Serra","Tarumã","Univalem","Vale do Rosário"
 ];
-const HORAS = [
-  "Selecione…",
-  "00:00","00:30","01:00","01:30","02:00","02:30","03:00","03:30","04:00","04:30",
-  "05:00","05:30","06:00","06:30","07:00","07:30","08:00","08:30","09:00","09:30",
-  "10:00","10:30","11:00","11:30","12:00","12:30","13:00","13:30","14:00","14:30",
-  "15:00","15:30","16:00","16:30","17:00","17:30","18:00","18:30","19:00","19:30",
-  "20:00","20:30","21:00","21:30","22:00","22:30","23:00","23:30"
-];
-const TURNOS = ["Selecione…","A","B","C"];
-const AREAS = ["Selecione…","Adm","Agr","Alm","Aut","Biogás","E2G","Ind"];
+
+const TURNOS = ["A", "B", "C"] as const;
+const AREAS = ["Adm", "Agr", "Alm", "Aut", "Biogás", "E2G", "Ind"] as const;
+
+const HORAS = (() => {
+  const r: string[] = [];
+  for (let h = 0; h < 24; h++) for (let m of [0, 30]) r.push(`${String(h).padStart(2, "0")}:${m === 0 ? "00" : "30"}`);
+  return r;
+})();
+
 const OBSERVACOES = [
-  "Selecione…",
   "Condição estrutural do equipamento","Condição estrutural do local",
   "Construção civil","COVID","Descarte de lixo","Direção segura",
   "Elevação e movimentação de carga","Espaço Confinado","LOTO",
@@ -31,364 +83,300 @@ const OBSERVACOES = [
   "Mov. cargas e interface Homem Máquina","Permissão de Serviços e procedimentos",
   "Regra dos três pontos","Segurança de processo (Aplicável na Indústria)",
   "Serviço elétrico","Serviços a quente","Trabalho em Altura",
-  "Uso de EPIS","5S"
+  "Uso de EPIs","5S"
 ];
 
-/** ====== CHAVES E LIMITES (sem mostrar nomes na UI) ====== */
-const KEY_LIMITS: Record<string, number> = {
-  "TheMito10": 10,
-  "TheMito50*": 50,
-  "TheMito100#": 100,
-};
-
-const todayStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-};
-const ymdToBr = (d: Date) =>
-  `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
-const backDate = (daysAgo: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d;
-};
-const normalizeKey = (k: string) => k.trim();
-
-type FormData = {
-  classificacao: string;
-  empresa: string;
-  unidade: string;
-  data: string; // dd/mm/yyyy
-  hora: string;
-  turno: string;
-  area: string;
-  setor: string;
-  atividade: string;
-  intervencao: string;
-  cs: string;
-  observacao: string;
-  descricao: string;
-  fiz: string;
-};
-
-const emptyForm: FormData = {
-  classificacao: CLASSIFICACOES[0],
-  empresa: EMPRESAS[0],
-  unidade: UNIDADES[0],
-  data: ymdToBr(new Date()),
-  hora: HORAS[0],
-  turno: TURNOS[0],
-  area: AREAS[0],
-  setor: "",
-  atividade: "",
-  intervencao: "",
-  cs: "",
-  observacao: OBSERVACOES[0],
-  descricao: "",
-  fiz: "",
-};
-
+/** ========= COMPONENTE ========= */
 export default function PreEnvioForms() {
-  const [form, setForm] = useState<FormData>(emptyForm);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormData | "key", string>>>({});
+  // ----- Licença / Limites
+  const [licenseKey, setLicenseKey] = useState("");
+  const [dailyLimit, setDailyLimit] = useState<number>(10);
+  const [usedToday, setUsedToday] = useState<number>(0);
+  const [locked, setLocked] = useState(true);
+
+  // ----- Saved lists (localStorage)
+  const [savedSetores, setSavedSetores] = useState<string[]>([]);
+  const [savedAtividades, setSavedAtividades] = useState<string[]>([]);
+  const [saveSetor, setSaveSetor] = useState(false);
+  const [saveAtividade, setSaveAtividade] = useState(false);
+
+  // ----- Form
+  const [form, setForm] = useState({
+    classificacao: CLASSIFICACOES[0],
+    empresa: EMPRESAS[0],
+    unidade: "Vale do Rosário",
+    data: toBRDate(new Date()),
+    hora: "08:00",
+    turno: "A",
+    area: "Adm",
+    setor: "",
+    atividade: "",
+    intervencao: "",
+    cs: "",
+    observacao: OBSERVACOES[0],
+    descricao: "",
+    fiz: "",
+  });
+  const [errors, setErrors] = useState<Partial<Record<keyof typeof form, string>>>({});
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState("");
 
-  // Chave
-  const [keyInput, setKeyInput] = useState("");
-  const [validatedKey, setValidatedKey] = useState<string | null>(null);
-  const limit = useMemo(() => (validatedKey ? KEY_LIMITS[validatedKey] ?? 0 : 0), [validatedKey]);
-
-  const getUsedToday = (key: string) => {
-    const k = normalizeKey(key);
-    if (!k) return 0;
-    return Number(localStorage.getItem(`usage:${k}:${todayStr()}`) || "0");
-  };
-  const setUsedToday = (key: string, value: number) => {
-    const k = normalizeKey(key);
-    if (!k) return;
-    localStorage.setItem(`usage:${k}:${todayStr()}`, String(value));
-  };
-  const usedToday = validatedKey ? getUsedToday(validatedKey) : 0;
-
-  const validated = Boolean(validatedKey);
-
-  /** ====== VALIDAR CHAVE / BLOQUEAR FORM ====== */
-  const validateKey = () => {
-    const k = normalizeKey(keyInput);
-    if (!k) {
-      setErrors((e) => ({ ...e, key: "Esta pergunta é obrigatória." }));
-      setValidatedKey(null);
-      return;
+  // exemplo de datas para tooltip do botão 10x
+  const exampleDates10 = useMemo(() => {
+    const base = new Date();
+    const pp = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(base);
+      d.setDate(base.getDate() - i);
+      pp.push(toBRDate(d));
     }
-    if (!KEY_LIMITS[k]) {
-      setErrors((e) => ({ ...e, key: "Chave inválida." }));
-      setValidatedKey(null);
-      return;
+    return pp.join(", ");
+  }, []);
+
+  // ----- Efeitos iniciais: carrega licença / contador / listas salvas
+  useEffect(() => {
+    // license
+    const lic = loadJSON<{ key: string; limit: number; validatedAt: string } | null>(LS_KEYS.license, null);
+    if (lic && lic.limit && lic.key) {
+      setLicenseKey(lic.key);
+      setDailyLimit(lic.limit);
+      setLocked(false);
     }
-    setErrors((e) => ({ ...e, key: undefined }));
-    setValidatedKey(k);
-  };
 
-  const resetKey = () => {
-    setValidatedKey(null);
-    setKeyInput("");
-  };
+    // counter
+    const saved = loadJSON<{ date: string; used: number } | null>(LS_KEYS.usedCounter, null);
+    const today = todayKey();
+    if (saved && saved.date === today) {
+      setUsedToday(saved.used);
+    } else {
+      saveJSON(LS_KEYS.usedCounter, { date: today, used: 0 });
+      setUsedToday(0);
+    }
 
-  /** ====== CHANGE HANDLER ====== */
-  const onChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
-  ) => {
+    // lists
+    setSavedSetores(loadJSON<string[]>(LS_KEYS.savedSetores, []));
+    setSavedAtividades(loadJSON<string[]>(LS_KEYS.savedAtividades, []));
+  }, []);
+
+  // ----- Handlers
+  function onChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
-    setErrors((err) => ({ ...err, [name]: undefined }));
-  };
+  }
 
-  /** ====== VALIDAÇÃO ====== */
-  const validateForm = (payload: FormData) => {
-    const err: Partial<Record<keyof FormData | "key", string>> = {};
-    const req = (field: keyof FormData) => {
-      if (
-        !payload[field] ||
-        String(payload[field]).trim() === "" ||
-        ["Selecione…"].includes(String(payload[field]))
-      ) {
-        err[field] = "Esta pergunta é obrigatória.";
-      }
-    };
-
-    // chave precisa estar validada
-    if (!validatedKey) err.key = "Esta pergunta é obrigatória.";
-
-    req("classificacao");
-    req("empresa");
-    req("unidade");
-    req("data");
-    req("hora");
-    req("turno");
-    req("area");
-    req("setor");
-    req("atividade");
-    req("intervencao");
-    req("cs");
-    req("observacao");
-    req("descricao");
-    req("fiz");
-
-    if (!err.cs) {
-      const n = Number(payload.cs);
-      if (!/^\d+$/.test(payload.cs) || n < 10 || n > 999999999) {
-        err.cs = "Esta pergunta é obrigatória.";
-      }
-    }
-
-    setErrors(err);
-    return Object.keys(err).length === 0;
-  };
-
-  /** ====== SALVAR (API → GitHub) ====== */
-  const saveOne = async (payload: any) => {
-    setStep("Salvando pacote na hospedagem…");
-    const res = await fetch("/api/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+  function validateAll(): boolean {
+    const e: typeof errors = {};
+    // required de todos os campos
+    (Object.keys(form) as (keyof typeof form)[]).forEach((k) => {
+      if (String(form[k]).trim() === "") e[k] = "Esta pergunta é obrigatória.";
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.ok) throw new Error(data?.error || "Falha ao salvar");
-    return data;
-  };
+    // regras extras
+    const n = Number(form.cs);
+    if (!Number.isFinite(n) || n < 10 || n > 999999999) {
+      e.cs = "Esta pergunta é obrigatória.";
+    }
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  }
 
-  /** ====== GERAR 1x ====== */
-  const gerar1 = async () => {
-    if (!validatedKey) {
-      setErrors((e) => ({ ...e, key: "Esta pergunta é obrigatória." }));
-      return;
+  function updateUsed(add: number) {
+    const today = todayKey();
+    const used = Math.min(dailyLimit, usedToday + add);
+    setUsedToday(used);
+    saveJSON(LS_KEYS.usedCounter, { date: today, used });
+  }
+
+  function persistSavedListsIfChecked() {
+    let nextSetores = savedSetores.slice();
+    let nextAtivs = savedAtividades.slice();
+
+    if (saveSetor && form.setor.trim()) nextSetores = upsertToArray(nextSetores, form.setor);
+    if (saveAtividade && form.atividade.trim()) nextAtivs = upsertToArray(nextAtivs, form.atividade);
+
+    if (nextSetores !== savedSetores) {
+      setSavedSetores(nextSetores);
+      saveJSON(LS_KEYS.savedSetores, nextSetores);
     }
-    if (!validateForm(form)) return;
-    if (usedToday >= limit) {
-      setStep(`Limite diário atingido (${usedToday}/${limit}).`);
+    if (nextAtivs !== savedAtividades) {
+      setSavedAtividades(nextAtivs);
+      saveJSON(LS_KEYS.savedAtividades, nextAtivs);
+    }
+  }
+
+  async function gerar(lote10: boolean) {
+    if (locked) return;
+    if (!validateAll()) return;
+
+    const total = lote10 ? 10 : 1;
+    if (usedToday + total > dailyLimit) {
+      alert(`Limite diário atingido. Hoje: ${usedToday}/${dailyLimit}.`);
       return;
     }
 
-    setRunning(true);
-    setProgress(5);
-    try {
-      setStep("Preparando pacote (1x)…");
-      const payload = {
-        tipo: "preenvio",
-        quando: new Date().toISOString(),
-        simulated: true,
-        key: validatedKey,
-        form,
-      };
-      setProgress(40);
-      await saveOne(payload);
-      setProgress(100);
-      setStep("Pronto! Seu formulário será enviado posteriormente.");
-      setUsedToday(validatedKey, usedToday + 1);
-    } catch (e: any) {
-      setStep(String(e.message || e));
-    } finally {
-      setTimeout(() => setRunning(false), 600);
-    }
-  };
-
-  /** ====== GERAR 10x (retrocedendo datas) ====== */
-  const gerar10 = async () => {
-    if (!validatedKey) {
-      setErrors((e) => ({ ...e, key: "Esta pergunta é obrigatória." }));
-      return;
-    }
-    if (!validateForm(form)) return;
-    const disponiveis = Math.max(0, limit - usedToday);
-    if (disponiveis <= 0) {
-      setStep(`Limite diário atingido (${usedToday}/${limit}).`);
-      return;
-    }
-    const toSend = Math.min(10, disponiveis);
+    // Salva nas listas pessoais, se marcado
+    persistSavedListsIfChecked();
 
     setRunning(true);
     setProgress(0);
+    setStep("Preparando…");
+
     try {
-      for (let i = 0; i < toSend; i++) {
-        setStep(`Gerando ${i + 1}/${toSend} (data retro: ${ymdToBr(backDate(i))})…`);
-        const payload = {
-          tipo: "preenvio",
-          quando: new Date().toISOString(),
-          simulated: true,
-          key: validatedKey,
-          form: { ...form, data: ymdToBr(backDate(i)) },
-        };
-        await saveOne(payload);
-        setProgress(Math.round(((i + 1) / toSend) * 100));
+      // monta os registros
+      const registros = [];
+      for (let i = 0; i < total; i++) {
+        const retroData = lote10 ? dateMinus(form.data, i) : form.data;
+        registros.push({
+          ...form,
+          data: retroData,
+          _generatedAt: new Date().toISOString(),
+          _batchIndex: i + 1,
+        });
       }
-      setUsedToday(validatedKey, usedToday + toSend);
-      setStep(`Pronto! Gerados ${toSend} pacotes. Seu formulário será enviado posteriormente.`);
-    } catch (e: any) {
-      setStep(String(e.message || e));
-    } finally {
+
+      // envia 1 a 1 para a API /api/save
+      for (let i = 0; i < registros.length; i++) {
+        setStep(`Salvando ${i + 1}/${registros.length}…`);
+        const res = await fetch("/api/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(registros[i]),
+        });
+        if (!res.ok) throw new Error(`Falha ao salvar (${i + 1})`);
+        const pct = Math.round(((i + 1) / registros.length) * 100);
+        setProgress(pct);
+      }
+
+      updateUsed(total);
+      setStep("Concluído!");
       setTimeout(() => setRunning(false), 600);
+
+    } catch (err) {
+      console.error(err);
+      setStep("Erro ao salvar. Tente novamente.");
+      setRunning(false);
     }
-  };
+  }
 
-  /** ====== UI ====== */
-  const exampleDates10 = Array.from({ length: 3 }, (_, i) => ymdToBr(backDate(i))).join(", ");
-  const disableFields = !validated || running;
+  function validateLicense() {
+    const key = licenseKey.trim().toUpperCase();
+    const limit = LICENSES[key];
+    if (!limit) {
+      alert("Chave inválida.");
+      setLocked(true);
+      return;
+    }
+    setDailyLimit(limit);
+    setLocked(false);
+    saveJSON(LS_KEYS.license, { key, limit, validatedAt: new Date().toISOString() });
 
+    // zera contador do dia ao validar chave (opcional: comente se não quiser)
+    saveJSON(LS_KEYS.usedCounter, { date: todayKey(), used: 0 });
+    setUsedToday(0);
+  }
+
+  // ----- UI
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      <header className="sticky top-0 bg-gray-900/90 backdrop-blur border-b border-white/10">
-        <div className="mx-auto max-w-md px-4 py-3">
+      {/* Cabeçalho */}
+      <header className="sticky top-0 z-10 bg-gray-900/80 backdrop-blur border-b border-white/10">
+        <div className="mx-auto max-w-xl px-4 py-4 flex items-center justify-between">
           <h1 className="text-lg font-semibold">Pré-envio de Formulários</h1>
-          <p className="text-xs text-gray-300">Seu formulário será enviado posteriormente.</p>
+          <div className="text-xs text-gray-300">Hoje: {usedToday}/{dailyLimit}</div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 pb-16">
-        {/* BLOCO DA CHAVE */}
-        <div className="mt-5 space-y-2">
-          <Field label="Insira sua chave">
+      {/* Conteúdo */}
+      <main className="mx-auto max-w-xl px-4 py-6">
+        {/* BLOQUEIO: tela de chave */}
+        {locked && (
+          <div className="mb-6 rounded-xl border border-white/10 p-4 bg-gray-800">
+            <div className="text-sm mb-2">Insira sua <b>chave</b> para liberar o formulário.</div>
             <div className="flex gap-2">
               <input
-                value={keyInput}
-                onChange={(e) => { setKeyInput(e.target.value); setErrors((er)=>({...er, key: undefined})); }}
-                className="input flex-1"
+                className="flex-1 px-3 py-2 rounded-md bg-gray-700 outline-none"
                 placeholder="Insira sua chave"
+                value={licenseKey}
+                onChange={(e) => setLicenseKey(e.target.value)}
                 inputMode="text"
-                autoComplete="off"
-                disabled={running}
+                autoCapitalize="characters"
               />
-              {!validated ? (
-                <button
-                  onClick={validateKey}
-                  className="px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
-                  disabled={running}
-                >
-                  Validar
-                </button>
-              ) : (
-                <button
-                  onClick={resetKey}
-                  className="px-3 py-2 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
-                  disabled={running}
-                >
-                  Trocar
-                </button>
-              )}
+              <button
+                className="px-4 py-2 rounded-md bg-purple-600 hover:bg-purple-500"
+                onClick={validateLicense}
+              >
+                Validar
+              </button>
             </div>
-            <Error text={errors.key} />
-          </Field>
-
-          {/* Status da chave */}
-          {validated ? (
-            <div className="text-sm">
-              <div className="text-emerald-400 font-medium">Chave válida! {limit}/{limit}</div>
-              <div className="text-gray-300 text-xs">Hoje: {usedToday}/{limit}</div>
+            <div className="text-xs text-gray-300 mt-2">
+              Chave válida exibe: <b>{dailyLimit}/{dailyLimit}</b> de limite diário.
             </div>
-          ) : (
-            <div className="text-xs text-gray-300">Valide sua chave para desbloquear o formulário.</div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* FORM (bloqueado até validar) */}
-        <div className="mt-6 space-y-3 opacity-100">
+        {/* FORMULÁRIO */}
+        <div className={`space-y-4 ${locked ? "pointer-events-none opacity-50" : ""}`}>
+          <p className="text-sm text-gray-300">
+            Seu formulário será enviado posteriormente.
+          </p>
+
           <Field label="1. Classificação">
-            <select name="classificacao" value={form.classificacao} onChange={onChange} className="select" disabled={disableFields}>
-              {CLASSIFICACOES.map((v) => <option key={v}>{v}</option>)}
+            <select name="classificacao" value={form.classificacao} onChange={onChange} className="select">
+              {CLASSIFICACOES.map((o) => <option key={o}>{o}</option>)}
             </select>
             <Error text={errors.classificacao} />
           </Field>
 
           <Field label="2. Empresa">
-            <select name="empresa" value={form.empresa} onChange={onChange} className="select" disabled={disableFields}>
-              {EMPRESAS.map((v) => <option key={v}>{v}</option>)}
+            <select name="empresa" value={form.empresa} onChange={onChange} className="select">
+              {EMPRESAS.map((o) => <option key={o}>{o}</option>)}
             </select>
             <Error text={errors.empresa} />
           </Field>
 
           <Field label="3. Unidade">
-            <select name="unidade" value={form.unidade} onChange={onChange} className="select" disabled={disableFields}>
-              {UNIDADES.map((v) => <option key={v}>{v}</option>)}
+            <select name="unidade" value={form.unidade} onChange={onChange} className="select">
+              {UNIDADES.map((o) => <option key={o}>{o}</option>)}
             </select>
             <Error text={errors.unidade} />
           </Field>
 
-          <Field label="4. Data">
-            <input
-              name="data"
-              value={form.data}
-              onChange={onChange}
-              className="input"
-              placeholder="dd/mm/aaaa"
-              inputMode="numeric"
-              disabled={disableFields}
-            />
-            <Error text={errors.data} />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="4. Data">
+              <input
+                name="data"
+                value={form.data}
+                onChange={onChange}
+                className="input"
+                placeholder="dd/mm/aaaa"
+                inputMode="numeric"
+              />
+              <Error text={errors.data} />
+            </Field>
+            <Field label="5. Hora">
+              <select name="hora" value={form.hora} onChange={onChange} className="select">
+                {HORAS.map((h) => <option key={h}>{h}</option>)}
+              </select>
+              <Error text={errors.hora} />
+            </Field>
+          </div>
 
-          <Field label="5. Hora">
-            <select name="hora" value={form.hora} onChange={onChange} className="select" disabled={disableFields}>
-              {HORAS.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <Error text={errors.hora} />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="6. Turno">
+              <select name="turno" value={form.turno} onChange={onChange} className="select">
+                {TURNOS.map((t) => <option key={t}>{t}</option>)}
+              </select>
+              <Error text={errors.turno} />
+            </Field>
+            <Field label="7. Área onde a intervenção foi realizada">
+              <select name="area" value={form.area} onChange={onChange} className="select">
+                {AREAS.map((a) => <option key={a}>{a}</option>)}
+              </select>
+              <Error text={errors.area} />
+            </Field>
+          </div>
 
-          <Field label="6. Turno">
-            <select name="turno" value={form.turno} onChange={onChange} className="select" disabled={disableFields}>
-              {TURNOS.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <Error text={errors.turno} />
-          </Field>
-
-          <Field label="7. Área onde a intervenção foi realizada">
-            <select name="area" value={form.area} onChange={onChange} className="select" disabled={disableFields}>
-              {AREAS.map((v) => <option key={v}>{v}</option>)}
-            </select>
-            <Error text={errors.area} />
-          </Field>
-
+          {/* Setor com autocomplete + checkbox salvar */}
           <Field label="8. Setor onde a intervenção foi realizada">
             <input
               name="setor"
@@ -396,11 +384,25 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="input"
               placeholder="Informe o setor"
-              disabled={disableFields}
+              list="setorOptions"
+              autoComplete="off"
             />
+            <datalist id="setorOptions">
+              {savedSetores.map((s) => <option key={s} value={s} />)}
+            </datalist>
+
+            <label className="mt-2 flex items-center gap-2 text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={saveSetor}
+                onChange={(e) => setSaveSetor(e.target.checked)}
+              />
+              Salvar este setor na minha lista
+            </label>
             <Error text={errors.setor} />
           </Field>
 
+          {/* Atividade com autocomplete + checkbox salvar */}
           <Field label="9. Atividade realizada no momento da intervenção">
             <input
               name="atividade"
@@ -408,8 +410,21 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="input"
               placeholder="Descreva a atividade"
-              disabled={disableFields}
+              list="atividadeOptions"
+              autoComplete="off"
             />
+            <datalist id="atividadeOptions">
+              {savedAtividades.map((s) => <option key={s} value={s} />)}
+            </datalist>
+
+            <label className="mt-2 flex items-center gap-2 text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={saveAtividade}
+                onChange={(e) => setSaveAtividade(e.target.checked)}
+              />
+              Salvar esta atividade na minha lista
+            </label>
             <Error text={errors.atividade} />
           </Field>
 
@@ -420,7 +435,6 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="input"
               placeholder="Nome/Equipe"
-              disabled={disableFields}
             />
             <Error text={errors.intervencao} />
           </Field>
@@ -433,13 +447,12 @@ export default function PreEnvioForms() {
               className="input"
               placeholder="entre 10 e 999999999"
               inputMode="numeric"
-              disabled={disableFields}
             />
             <Error text={errors.cs} />
           </Field>
 
           <Field label="12. O que observei?">
-            <select name="observacao" value={form.observacao} onChange={onChange} className="select" disabled={disableFields}>
+            <select name="observacao" value={form.observacao} onChange={onChange} className="select">
               {OBSERVACOES.map((o) => <option key={o}>{o}</option>)}
             </select>
             <Error text={errors.observacao} />
@@ -452,7 +465,6 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="textarea"
               placeholder="Descreva brevemente"
-              disabled={disableFields}
             />
             <Error text={errors.descricao} />
           </Field>
@@ -464,17 +476,16 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="textarea"
               placeholder="Explique sua ação"
-              disabled={disableFields}
             />
             <Error text={errors.fiz} />
           </Field>
 
           {/* BOTÕES */}
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-6 flex flex-wrap gap-3">
             <button
               title="Gera um pacote (1x). Seu formulário será enviado posteriormente."
-              onClick={gerar1}
-              disabled={!validated || running}
+              onClick={() => gerar(false)}
+              disabled={running || locked}
               className="px-4 py-2 rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-60"
             >
               Gerar pacote (1x)
@@ -482,21 +493,21 @@ export default function PreEnvioForms() {
 
             <button
               title={`Gera 10 entradas retrocedendo a data (ex.: ${exampleDates10}).`}
-              onClick={gerar10}
-              disabled={!validated || running}
+              onClick={() => gerar(true)}
+              disabled={running || locked}
               className="px-4 py-2 rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-60"
             >
               Gerar lote (10x)
             </button>
 
-            <div className="text-xs text-gray-300 self-center sm:ml-auto">
-              Hoje: {usedToday}/{limit || 0}
+            <div className="text-sm text-gray-300 self-center">
+              Hoje: {usedToday}/{dailyLimit}
             </div>
           </div>
 
           {/* PROGRESSO */}
           {running && (
-            <div className="mt-4">
+            <div className="mt-6">
               <div className="h-2 bg-gray-700 rounded">
                 <div className="h-2 bg-indigo-500 rounded transition-all" style={{ width: `${progress}%` }} />
               </div>
@@ -506,11 +517,11 @@ export default function PreEnvioForms() {
         </div>
       </main>
 
-      {/* utilitários inline (mobile-first) */}
+      {/* utilitários inline */}
       <style>{`
-        .input { width:100%; padding:0.6rem 0.75rem; border-radius:0.5rem; background:#374151; outline:none; }
-        .select { width:100%; padding:0.6rem 0.75rem; border-radius:0.5rem; background:#374151; outline:none; }
-        .textarea { width:100%; min-height:100px; padding:0.6rem 0.75rem; border-radius:0.5rem; background:#374151; outline:none; }
+        .input { width:100%; padding:0.625rem 0.75rem; border-radius:0.5rem; background:#374151; outline:none; }
+        .select { width:100%; padding:0.625rem 0.75rem; border-radius:0.5rem; background:#374151; outline:none; }
+        .textarea { width:100%; min-height:96px; padding:0.625rem 0.75rem; border-radius:0.5rem; background:#374151; outline:none; }
       `}</style>
     </div>
   );
@@ -519,13 +530,30 @@ export default function PreEnvioForms() {
 /** ========= SUBCOMPONENTES ========= */
 function Field(props: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="mb-1 text-xs text-gray-300">{props.label}</div>
+    <div className="mb-4">
+      <div className="mb-1 text-sm text-gray-300">{props.label}</div>
       {props.children}
     </div>
   );
 }
+
 function Error({ text }: { text?: string }) {
   if (!text) return null;
   return <div className="text-red-400 text-xs mt-1">{text}</div>;
+}
+
+/** ========= HELPERS ========= */
+function toBRDate(d: Date) {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function dateMinus(brDate: string, minusDays: number) {
+  // brDate no formato dd/mm/yyyy
+  const [dd, mm, yyyy] = brDate.split("/").map((x) => parseInt(x, 10));
+  const d = new Date(yyyy, (mm ?? 1) - 1, dd ?? 1);
+  d.setDate(d.getDate() - minusDays);
+  return toBRDate(d);
 }
