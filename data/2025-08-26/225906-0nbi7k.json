@@ -1,0 +1,22 @@
+{
+  "tipo": "preenvio",
+  "quando": "2025-08-26T22:59:04.992Z",
+  "simulated": true,
+  "key": "TheMito10",
+  "form": {
+    "classificacao": "Condição insegura",
+    "empresa": "Raízen",
+    "unidade": "Vale do Rosário",
+    "data": "26/08/2025",
+    "hora": "00:00",
+    "turno": "C",
+    "area": "Agr",
+    "setor": "Carregamento 110",
+    "atividade": "Trasporte de vinhaça ",
+    "intervencao": "Almir Donizete custódio ",
+    "cs": "371562",
+    "observacao": "Condição estrutural do equipamento",
+    "descricao": "Área de vivência sem iluminação ",
+    "fiz": "Comuniquei gestor "
+  }
+}
