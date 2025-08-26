@@ -1,3 +1,4 @@
+﻿export const config = { runtime: "nodejs20.x" };
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -48,3 +49,4 @@ export default async function handler(req, res) {
     res.status(500).json({ ok:false, error: String(e) });
   }
 }
+
