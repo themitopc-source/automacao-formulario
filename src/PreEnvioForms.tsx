@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 
 /** ============== LISTAS (do seu código antigo) ============== */
 const CLASSIFICACOES = ["Selecione…","Quase acidente","Comportamento inseguro","Condição insegura"];
@@ -34,31 +34,26 @@ const OBSERVACOES = [
   "Uso de EPIS","5S"
 ];
 
-/** ====== CHAVES E LIMITES DIÁRIOS (sem mostrar nomes na UI) ====== */
+/** ====== CHAVES E LIMITES (sem mostrar nomes na UI) ====== */
 const KEY_LIMITS: Record<string, number> = {
   "TheMito10": 10,
   "TheMito50*": 50,
   "TheMito100#": 100,
 };
-const normalizeKey = (k: string) => k.trim();
 
-/** ============== HELPERS ============== */
 const todayStr = () => {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 };
 const ymdToBr = (d: Date) =>
-  `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+  `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
 const backDate = (daysAgo: number) => {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
   return d;
 };
+const normalizeKey = (k: string) => k.trim();
 
-/** ============== FORM COMPONENT ============== */
 type FormData = {
   classificacao: string;
   empresa: string;
@@ -74,8 +69,6 @@ type FormData = {
   observacao: string;
   descricao: string;
   fiz: string;
-  // chave
-  key: string;
 };
 
 const emptyForm: FormData = {
@@ -93,35 +86,54 @@ const emptyForm: FormData = {
   observacao: OBSERVACOES[0],
   descricao: "",
   fiz: "",
-  key: "",
 };
 
 export default function PreEnvioForms() {
   const [form, setForm] = useState<FormData>(emptyForm);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>(
-    {}
-  );
+  const [errors, setErrors] = useState<Partial<Record<keyof FormData | "key", string>>>({});
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState("");
 
-  /** ====== USO DIÁRIO POR CHAVE ====== */
-  const limit = useMemo(() => {
-    const k = normalizeKey(form.key);
-    return KEY_LIMITS[k] ?? 0;
-  }, [form.key]);
-  const usedToday = useMemo(() => {
-    const k = normalizeKey(form.key);
-    if (!k) return 0;
-    const key = `usage:${k}:${todayStr()}`;
-    return Number(localStorage.getItem(key) || "0");
-  }, [form.key]);
+  // Chave
+  const [keyInput, setKeyInput] = useState("");
+  const [validatedKey, setValidatedKey] = useState<string | null>(null);
+  const limit = useMemo(() => (validatedKey ? KEY_LIMITS[validatedKey] ?? 0 : 0), [validatedKey]);
 
-  const setUsedToday = (value: number) => {
-    const k = normalizeKey(form.key);
+  const getUsedToday = (key: string) => {
+    const k = normalizeKey(key);
+    if (!k) return 0;
+    return Number(localStorage.getItem(`usage:${k}:${todayStr()}`) || "0");
+  };
+  const setUsedToday = (key: string, value: number) => {
+    const k = normalizeKey(key);
     if (!k) return;
-    const key = `usage:${k}:${todayStr()}`;
-    localStorage.setItem(key, String(value));
+    localStorage.setItem(`usage:${k}:${todayStr()}`, String(value));
+  };
+  const usedToday = validatedKey ? getUsedToday(validatedKey) : 0;
+
+  const validated = Boolean(validatedKey);
+
+  /** ====== VALIDAR CHAVE / BLOQUEAR FORM ====== */
+  const validateKey = () => {
+    const k = normalizeKey(keyInput);
+    if (!k) {
+      setErrors((e) => ({ ...e, key: "Esta pergunta é obrigatória." }));
+      setValidatedKey(null);
+      return;
+    }
+    if (!KEY_LIMITS[k]) {
+      setErrors((e) => ({ ...e, key: "Chave inválida." }));
+      setValidatedKey(null);
+      return;
+    }
+    setErrors((e) => ({ ...e, key: undefined }));
+    setValidatedKey(k);
+  };
+
+  const resetKey = () => {
+    setValidatedKey(null);
+    setKeyInput("");
   };
 
   /** ====== CHANGE HANDLER ====== */
@@ -134,15 +146,21 @@ export default function PreEnvioForms() {
   };
 
   /** ====== VALIDAÇÃO ====== */
-  const validate = (payload: FormData) => {
-    const err: Partial<Record<keyof FormData, string>> = {};
+  const validateForm = (payload: FormData) => {
+    const err: Partial<Record<keyof FormData | "key", string>> = {};
     const req = (field: keyof FormData) => {
-      if (!payload[field] || String(payload[field]).trim() === "" ||
-          ["Selecione…"].includes(String(payload[field]))) {
+      if (
+        !payload[field] ||
+        String(payload[field]).trim() === "" ||
+        ["Selecione…"].includes(String(payload[field]))
+      ) {
         err[field] = "Esta pergunta é obrigatória.";
       }
     };
-    req("key");
+
+    // chave precisa estar validada
+    if (!validatedKey) err.key = "Esta pergunta é obrigatória.";
+
     req("classificacao");
     req("empresa");
     req("unidade");
@@ -158,7 +176,6 @@ export default function PreEnvioForms() {
     req("descricao");
     req("fiz");
 
-    // extra: CS numérico 10..999999999
     if (!err.cs) {
       const n = Number(payload.cs);
       if (!/^\d+$/.test(payload.cs) || n < 10 || n > 999999999) {
@@ -166,17 +183,11 @@ export default function PreEnvioForms() {
       }
     }
 
-    // chave válida?
-    const k = normalizeKey(payload.key);
-    if (!err.key && !KEY_LIMITS[k]) {
-      err.key = "Chave inválida.";
-    }
-
     setErrors(err);
     return Object.keys(err).length === 0;
   };
 
-  /** ====== SALVAR PACOTE (API Vercel → GitHub) ====== */
+  /** ====== SALVAR (API → GitHub) ====== */
   const saveOne = async (payload: any) => {
     setStep("Salvando pacote na hospedagem…");
     const res = await fetch("/api/save", {
@@ -185,19 +196,17 @@ export default function PreEnvioForms() {
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.ok) {
-      throw new Error(data?.error || "Falha ao salvar");
-    }
+    if (!res.ok || !data?.ok) throw new Error(data?.error || "Falha ao salvar");
     return data;
   };
 
   /** ====== GERAR 1x ====== */
   const gerar1 = async () => {
-    if (!validate(form)) return;
-    if (limit <= 0) {
-      setErrors((e) => ({ ...e, key: "Chave inválida." }));
+    if (!validatedKey) {
+      setErrors((e) => ({ ...e, key: "Esta pergunta é obrigatória." }));
       return;
     }
+    if (!validateForm(form)) return;
     if (usedToday >= limit) {
       setStep(`Limite diário atingido (${usedToday}/${limit}).`);
       return;
@@ -206,18 +215,19 @@ export default function PreEnvioForms() {
     setRunning(true);
     setProgress(5);
     try {
-      setStep("Preparando pacote (1x) …");
+      setStep("Preparando pacote (1x)…");
       const payload = {
         tipo: "preenvio",
         quando: new Date().toISOString(),
         simulated: true,
+        key: validatedKey,
         form,
       };
       setProgress(40);
       await saveOne(payload);
       setProgress(100);
       setStep("Pronto! Seu formulário será enviado posteriormente.");
-      setUsedToday(usedToday + 1);
+      setUsedToday(validatedKey, usedToday + 1);
     } catch (e: any) {
       setStep(String(e.message || e));
     } finally {
@@ -227,33 +237,34 @@ export default function PreEnvioForms() {
 
   /** ====== GERAR 10x (retrocedendo datas) ====== */
   const gerar10 = async () => {
-    if (!validate(form)) return;
-    if (limit <= 0) {
-      setErrors((e) => ({ ...e, key: "Chave inválida." }));
+    if (!validatedKey) {
+      setErrors((e) => ({ ...e, key: "Esta pergunta é obrigatória." }));
       return;
     }
+    if (!validateForm(form)) return;
     const disponiveis = Math.max(0, limit - usedToday);
     if (disponiveis <= 0) {
       setStep(`Limite diário atingido (${usedToday}/${limit}).`);
       return;
     }
-
     const toSend = Math.min(10, disponiveis);
+
     setRunning(true);
     setProgress(0);
     try {
       for (let i = 0; i < toSend; i++) {
-        setStep(`Gerando ${i + 1}/${toSend} (data retro: ${ymdToBr(backDate(i))}) …`);
+        setStep(`Gerando ${i + 1}/${toSend} (data retro: ${ymdToBr(backDate(i))})…`);
         const payload = {
           tipo: "preenvio",
           quando: new Date().toISOString(),
           simulated: true,
+          key: validatedKey,
           form: { ...form, data: ymdToBr(backDate(i)) },
         };
         await saveOne(payload);
         setProgress(Math.round(((i + 1) / toSend) * 100));
       }
-      setUsedToday(usedToday + toSend);
+      setUsedToday(validatedKey, usedToday + toSend);
       setStep(`Pronto! Gerados ${toSend} pacotes. Seu formulário será enviado posteriormente.`);
     } catch (e: any) {
       setStep(String(e.message || e));
@@ -264,55 +275,81 @@ export default function PreEnvioForms() {
 
   /** ====== UI ====== */
   const exampleDates10 = Array.from({ length: 3 }, (_, i) => ymdToBr(backDate(i))).join(", ");
+  const disableFields = !validated || running;
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <header className="sticky top-0 bg-gray-900/90 backdrop-blur border-b border-white/10">
         <div className="mx-auto max-w-md px-4 py-3">
           <h1 className="text-lg font-semibold">Pré-envio de Formulários</h1>
-          <p className="text-xs text-gray-300">
-            Seu formulário será enviado posteriormente.
-          </p>
+          <p className="text-xs text-gray-300">Seu formulário será enviado posteriormente.</p>
         </div>
       </header>
 
       <main className="mx-auto max-w-md px-4 pb-16">
-        {/* Campo da chave (sem citar nomes das chaves) */}
-        <div className="mt-5">
+        {/* BLOCO DA CHAVE */}
+        <div className="mt-5 space-y-2">
           <Field label="Insira sua chave">
-            <input
-              name="key"
-              value={form.key}
-              onChange={onChange}
-              className="input"
-              placeholder="Insira sua chave"
-              inputMode="text"
-              autoComplete="off"
-            />
+            <div className="flex gap-2">
+              <input
+                value={keyInput}
+                onChange={(e) => { setKeyInput(e.target.value); setErrors((er)=>({...er, key: undefined})); }}
+                className="input flex-1"
+                placeholder="Insira sua chave"
+                inputMode="text"
+                autoComplete="off"
+                disabled={running}
+              />
+              {!validated ? (
+                <button
+                  onClick={validateKey}
+                  className="px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60"
+                  disabled={running}
+                >
+                  Validar
+                </button>
+              ) : (
+                <button
+                  onClick={resetKey}
+                  className="px-3 py-2 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-60"
+                  disabled={running}
+                >
+                  Trocar
+                </button>
+              )}
+            </div>
             <Error text={errors.key} />
           </Field>
-          <div className="text-xs text-gray-300">
-            Hoje: {usedToday}/{limit || 0}
-          </div>
+
+          {/* Status da chave */}
+          {validated ? (
+            <div className="text-sm">
+              <div className="text-emerald-400 font-medium">Chave válida! {limit}/{limit}</div>
+              <div className="text-gray-300 text-xs">Hoje: {usedToday}/{limit}</div>
+            </div>
+          ) : (
+            <div className="text-xs text-gray-300">Valide sua chave para desbloquear o formulário.</div>
+          )}
         </div>
 
-        <div className="mt-6 space-y-3">
+        {/* FORM (bloqueado até validar) */}
+        <div className="mt-6 space-y-3 opacity-100">
           <Field label="1. Classificação">
-            <select name="classificacao" value={form.classificacao} onChange={onChange} className="select">
+            <select name="classificacao" value={form.classificacao} onChange={onChange} className="select" disabled={disableFields}>
               {CLASSIFICACOES.map((v) => <option key={v}>{v}</option>)}
             </select>
             <Error text={errors.classificacao} />
           </Field>
 
           <Field label="2. Empresa">
-            <select name="empresa" value={form.empresa} onChange={onChange} className="select">
+            <select name="empresa" value={form.empresa} onChange={onChange} className="select" disabled={disableFields}>
               {EMPRESAS.map((v) => <option key={v}>{v}</option>)}
             </select>
             <Error text={errors.empresa} />
           </Field>
 
           <Field label="3. Unidade">
-            <select name="unidade" value={form.unidade} onChange={onChange} className="select">
+            <select name="unidade" value={form.unidade} onChange={onChange} className="select" disabled={disableFields}>
               {UNIDADES.map((v) => <option key={v}>{v}</option>)}
             </select>
             <Error text={errors.unidade} />
@@ -326,26 +363,27 @@ export default function PreEnvioForms() {
               className="input"
               placeholder="dd/mm/aaaa"
               inputMode="numeric"
+              disabled={disableFields}
             />
             <Error text={errors.data} />
           </Field>
 
           <Field label="5. Hora">
-            <select name="hora" value={form.hora} onChange={onChange} className="select">
+            <select name="hora" value={form.hora} onChange={onChange} className="select" disabled={disableFields}>
               {HORAS.map((v) => <option key={v}>{v}</option>)}
             </select>
             <Error text={errors.hora} />
           </Field>
 
           <Field label="6. Turno">
-            <select name="turno" value={form.turno} onChange={onChange} className="select">
+            <select name="turno" value={form.turno} onChange={onChange} className="select" disabled={disableFields}>
               {TURNOS.map((v) => <option key={v}>{v}</option>)}
             </select>
             <Error text={errors.turno} />
           </Field>
 
           <Field label="7. Área onde a intervenção foi realizada">
-            <select name="area" value={form.area} onChange={onChange} className="select">
+            <select name="area" value={form.area} onChange={onChange} className="select" disabled={disableFields}>
               {AREAS.map((v) => <option key={v}>{v}</option>)}
             </select>
             <Error text={errors.area} />
@@ -358,6 +396,7 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="input"
               placeholder="Informe o setor"
+              disabled={disableFields}
             />
             <Error text={errors.setor} />
           </Field>
@@ -369,6 +408,7 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="input"
               placeholder="Descreva a atividade"
+              disabled={disableFields}
             />
             <Error text={errors.atividade} />
           </Field>
@@ -380,6 +420,7 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="input"
               placeholder="Nome/Equipe"
+              disabled={disableFields}
             />
             <Error text={errors.intervencao} />
           </Field>
@@ -392,12 +433,13 @@ export default function PreEnvioForms() {
               className="input"
               placeholder="entre 10 e 999999999"
               inputMode="numeric"
+              disabled={disableFields}
             />
             <Error text={errors.cs} />
           </Field>
 
           <Field label="12. O que observei?">
-            <select name="observacao" value={form.observacao} onChange={onChange} className="select">
+            <select name="observacao" value={form.observacao} onChange={onChange} className="select" disabled={disableFields}>
               {OBSERVACOES.map((o) => <option key={o}>{o}</option>)}
             </select>
             <Error text={errors.observacao} />
@@ -410,6 +452,7 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="textarea"
               placeholder="Descreva brevemente"
+              disabled={disableFields}
             />
             <Error text={errors.descricao} />
           </Field>
@@ -421,6 +464,7 @@ export default function PreEnvioForms() {
               onChange={onChange}
               className="textarea"
               placeholder="Explique sua ação"
+              disabled={disableFields}
             />
             <Error text={errors.fiz} />
           </Field>
@@ -430,7 +474,7 @@ export default function PreEnvioForms() {
             <button
               title="Gera um pacote (1x). Seu formulário será enviado posteriormente."
               onClick={gerar1}
-              disabled={running}
+              disabled={!validated || running}
               className="px-4 py-2 rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-60"
             >
               Gerar pacote (1x)
@@ -439,7 +483,7 @@ export default function PreEnvioForms() {
             <button
               title={`Gera 10 entradas retrocedendo a data (ex.: ${exampleDates10}).`}
               onClick={gerar10}
-              disabled={running}
+              disabled={!validated || running}
               className="px-4 py-2 rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-60"
             >
               Gerar lote (10x)
