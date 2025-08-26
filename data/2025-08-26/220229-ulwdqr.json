@@ -1,0 +1,24 @@
+{
+  "kind": "preenvio-pack",
+  "count": 1,
+  "dayKey": "2025-08-26",
+  "entries": [
+    {
+      "classificacao": "Quase acidente",
+      "empresa": "Raízen",
+      "unidade": "Araraquara",
+      "data": "26/08/2025",
+      "hora": "08:00",
+      "turno": "A",
+      "area": "Biogás",
+      "setor": "sad",
+      "atividade": "dasd",
+      "intervencao": "asdas",
+      "cs": "369874",
+      "observacao": "Regra dos três pontos",
+      "descricao": "asdas",
+      "fiz": "asdsa",
+      "createdAt": "2025-08-26T22:02:14.323Z"
+    }
+  ]
+}
