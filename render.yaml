@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: raizen-automatizador-web
+    env: docker
+    plan: starter
+    disk:
+      name: persist
+      mountPath: /data
+      sizeGB: 1

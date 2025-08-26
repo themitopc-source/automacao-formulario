@@ -1,18 +1,218 @@
-<!DOCTYPE html>
+
+<!doctype html>
 <html lang="pt-br">
 <head>
-    <meta charset="UTF-8">
-    <title>Automatizador de Formulário</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Automatizador de Formulários (Web)</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <h1>Automatizador de Formulário</h1>
-    <form action="/" method="post">
-        <label for="nome">Nome:</label>
-        <input type="text" name="nome" id="nome" required>
-        <label for="email">Email:</label>
-        <input type="email" name="email" id="email" required>
-        <button type="submit">Enviar</button>
-    </form>
+  <div class="wrap">
+    <h1>Automatizador de Formulários (Web)</h1>
+
+    <section class="card">
+      <h3>Licença</h3>
+      <div class="row">
+        <input id="key" placeholder="Digite: TheMito (30d) ou TheMito10 (90d)" />
+        <button onclick="validar()">Validar</button>
+        <span id="lic-status" class="{{ 'ok' if lic_ok else 'err' }}">
+          {{ 'Licença ativa' if lic_ok else 'Licença necessária' }}
+        </span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Dados do Formulário</h3>
+      <form id="f" onsubmit="return false;">
+        <label>URL do Forms</label>
+        <input name="form_url" value="{{ st.last_values.form_url }}" />
+
+        <div class="grid">
+          <div>
+            <label>1. Classificação</label>
+            <select name="classificacao">
+              {% for opt in ["Quase acidente","Comportamento inseguro","Condição insegura"] %}
+              <option value="{{opt}}" {{ 'selected' if st.last_values.classificacao==opt else '' }}>{{opt}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>2. Empresa</label>
+            <select name="empresa">
+              {% for opt in ["Raízen","Contratada"] %}
+              <option value="{{opt}}" {{ 'selected' if st.last_values.empresa==opt else '' }}>{{opt}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>3. Unidade</label>
+            <select name="unidade">
+              {% for u in unidades %}
+              <option value="{{u}}" {{ 'selected' if st.last_values.unidade==u else '' }}>{{u}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>4. Data (dd/mm/aaaa)</label>
+            <input name="data" value="{{ st.last_values.data }}">
+          </div>
+          <div>
+            <label>5. Hora</label>
+            <select name="hora">
+              {% for h in hora_opts %}
+              <option value="{{h}}" {{ 'selected' if st.last_values.hora==h else '' }}>{{h}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>6. Turno</label>
+            <select name="turno">
+              {% for t in ["A","B","C"] %}
+              <option value="{{t}}" {{ 'selected' if st.last_values.turno==t else '' }}>{{t}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>7. Área</label>
+            <select name="area">
+              {% for a in ["Adm","Agr","Alm","Aut","Biogás","E2G","Ind"] %}
+              <option value="{{a}}" {{ 'selected' if st.last_values.area==a else '' }}>{{a}}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div>
+            <label>8. Setor</label>
+            <input list="setores" name="setor" value="{{ st.last_values.setor }}">
+            <datalist id="setores">
+              {% for s in st.setor %}<option value="{{s}}">{% endfor %}
+            </datalist>
+            <button class="x" type="button" onclick="rem('setor', document.querySelector('[name=setor]').value)">X</button>
+          </div>
+          <div>
+            <label>9. Atividade</label>
+            <input list="ativs" name="atividade" value="{{ st.last_values.atividade }}">
+            <datalist id="ativs">
+              {% for s in st.atividade %}<option value="{{s}}">{% endfor %}
+            </datalist>
+            <button class="x" type="button" onclick="rem('atividade', document.querySelector('[name=atividade]').value)">X</button>
+          </div>
+          <div>
+            <label>10. Intervenção</label>
+            <input list="intervs" name="intervencao" value="{{ st.last_values.intervencao }}" oninput="autoCS(this.value)">
+            <datalist id="intervs">
+              {% for s in st.intervencao %}<option value="{{s}}">{% endfor %}
+            </datalist>
+            <button class="x" type="button" onclick="rem('intervencao', document.querySelector('[name=intervencao]').value)">X</button>
+            <small>Enviada: <b id="count">
+              {{ st.intervencao_counts.get(st.last_values.intervencao, 0) if st.last_values.intervencao else 0 }}
+            </b></small>
+          </div>
+          <div>
+            <label>11. CS (10..999999999)</label>
+            <input name="cs" value="{{ st.last_values.cs }}">
+          </div>
+          <div>
+            <label>12. Observação</label>
+            <select name="observacao">
+              {% for o in obs_opts %}
+              <option value="{{o}}" {{ 'selected' if st.last_values.observacao==o else '' }}>{{o}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>13. Descrição</label>
+            <input name="descricao" value="{{ st.last_values.descricao }}" placeholder="introduza a sua resposta">
+          </div>
+          <div>
+            <label>14. O que eu fiz</label>
+            <input name="fiz" value="{{ st.last_values.fiz }}" placeholder="introduza a sua resposta">
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="btn1" onclick="sendOnce()">Preencher e Enviar</button>
+          <button id="btn10" onclick="send10()">10x (datas regressivas)</button>
+        </div>
+      </form>
+      <pre id="log"></pre>
+    </section>
+  </div>
+
+  <script>
+    async function validar(){
+      const key = document.getElementById('key').value;
+      const r = await fetch('/license/validate', {
+        method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({key})
+      });
+      const j = await r.json();
+      const el = document.getElementById('lic-status');
+      if(r.ok){ el.textContent = 'Licença ativa até ' + (new Date(j.expires)).toLocaleString(); el.className='ok'; }
+      else { el.textContent = j.detail || 'Erro'; el.className='err'; }
+    }
+
+    async function rem(field, value){
+      if(!value) return;
+      await fetch('/delete_value', {
+        method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:new URLSearchParams({field, value})
+      });
+      location.reload();
+    }
+
+    async function sendOnce(){
+      setLoading(true);
+      const form = document.getElementById('f');
+      const fd = new FormData(form);
+      try{
+        const r = await fetch('/send', {method:'POST', body: fd});
+        const j = await r.json();
+        log(JSON.stringify(j, null, 2));
+        if(j.ok){
+          document.getElementById('count').textContent = j.count;
+        }
+      }catch(e){ log('Erro: '+e); }
+      setLoading(false);
+    }
+
+    async function send10(){
+      setLoading(true);
+      const form = document.getElementById('f');
+      const fd = new FormData(form);
+      try{
+        const r = await fetch('/send10', {method:'POST', body: fd});
+        const j = await r.json();
+        log(JSON.stringify(j, null, 2));
+        if(j.ok){
+          document.getElementById('count').textContent = j.count;
+        }
+      }catch(e){ log('Erro: '+e); }
+      setLoading(false);
+    }
+
+    async function autoCS(name){
+      if(!name) return;
+      const r = await fetch('/saved');
+      const st = await r.json();
+      if(st.intervencao_cs_map && st.intervencao_cs_map[name]){
+        document.querySelector('[name=cs]').value = st.intervencao_cs_map[name];
+      }
+    }
+
+    function log(msg){
+      const el = document.getElementById('log');
+      el.textContent += msg + "\\n";
+    }
+    function setLoading(x){
+      document.getElementById('btn1').disabled = x;
+      document.getElementById('btn10').disabled = x;
+    }
+  </script>
 </body>
 </html>

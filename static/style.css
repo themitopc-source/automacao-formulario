@@ -1,25 +1,17 @@
-body {
-    font-family: Arial, sans-serif;
-    background-color: #f2f2f2;
-    margin: 0;
-    padding: 40px;
-}
-h1 {
-    color: #333;
-}
-form {
-    background: white;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-}
-label {
-    display: block;
-    margin-top: 10px;
-}
-input, button {
-    width: 100%;
-    padding: 8px;
-    margin-top: 5px;
-    box-sizing: border-box;
-}
+
+*{ box-sizing: border-box; }
+body{ font-family: Arial, sans-serif; margin: 0; background: #f5f7fb; color:#222; }
+.wrap{ max-width: 1000px; margin: 24px auto; padding: 0 16px; }
+h1{ margin-bottom: 12px; }
+.card{ background:#fff; border:1px solid #e7e7e7; padding:16px; border-radius:12px; margin-bottom:16px; }
+.row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.grid{ display:grid; grid-template-columns: repeat(3, minmax(220px,1fr)); gap:12px; }
+label{ font-weight:600; display:block; margin-bottom:6px; }
+input, select, button{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid #ccd5e0; }
+button{ background:#6a5acd; color:#fff; border:none; cursor:pointer; }
+button:hover{ opacity:.95; }
+button.x{ width:auto; padding:8px 10px; background:#e74c3c; }
+#lic-status.ok{ color:#2ecc71; }
+#lic-status.err{ color:#e74c3c; }
+small{ display:block; margin-top:6px; }
+pre#log{ background:#0b1020; color:#cde2ff; padding:12px; border-radius:8px; min-height:80px; max-height:200px; overflow:auto; }
