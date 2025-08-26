@@ -1,101 +1,81 @@
 ﻿export const config = { runtime: "nodejs" };
 
-// Lê o corpo cru da request (Node runtime)
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk) => (data += chunk));
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
-
-// Resposta JSON + CORS
-function sendJson(res, status, obj) {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.end(JSON.stringify(obj));
-}
-
-// CORS preflight
-function handleOptions(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.statusCode = 204;
-  res.end();
-}
-
 export default async function handler(req, res) {
   try {
-    if (req.method === "OPTIONS") return handleOptions(res);
     if (req.method !== "POST") {
-      return sendJson(res, 405, { ok: false, error: "method_not_allowed" });
+      return res.status(405).json({ ok: false, error: "method_not_allowed" });
     }
 
-    const owner  = process.env.GITHUB_OWNER;
-    const repo   = process.env.GITHUB_REPO;
-    const branch = process.env.GITHUB_BRANCH || "main";
-    const token  = process.env.GITHUB_TOKEN;
-
-    if (!owner || !repo || !branch || !token) {
-      return sendJson(res, 500, { ok: false, error: "missing_env", details: { owner: !!owner, repo: !!repo, branch: !!branch, token: !!token } });
-    }
-
-    // Lê corpo cru e valida JSON
-    const raw = await readBody(req);
-    let payload;
+    // tenta ler JSON
+    let body;
     try {
-      payload = JSON.parse(raw);
-    } catch (e) {
-      return sendJson(res, 400, { ok: false, error: "invalid_json", details: String(e) });
+      body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body);
+    } catch {
+      return res.status(400).json({ ok: false, error: "invalid_json" });
     }
 
-    // Gera caminho do arquivo
+    const OWNER  = process.env.GITHUB_OWNER;
+    const REPO   = process.env.GITHUB_REPO;
+    const BRANCH = process.env.GITHUB_BRANCH || "main";
+    const TOKEN  = process.env.GITHUB_TOKEN;
+
+    const missing = {
+      owner: !OWNER,
+      repo: !REPO,
+      branch: !BRANCH,
+      token: !TOKEN,
+    };
+    if (missing.owner || missing.repo || missing.branch || missing.token) {
+      return res.status(500).json({ ok: false, error: "missing_env", details: missing });
+    }
+
+    // caminho data/YYYY-MM-DD/hhmmss-aleatorio.json
     const now = new Date();
-    const ymd = now.toISOString().slice(0, 10);
-    const hms = now.toISOString().slice(11, 19).replace(/:/g, "");
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mi = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
     const rand = Math.random().toString(36).slice(2, 8);
-    const path = `data/${ymd}/${hms}-${rand}.json`;
 
-    const content = Buffer.from(JSON.stringify(payload, null, 2) + "\n").toString("base64");
+    const path = `data/${yyyy}-${mm}-${dd}/${hh}${mi}${ss}-${rand}.json`;
+    const contentStr = JSON.stringify(body, null, 2);
+    const b64 = Buffer.from(contentStr, "utf-8").toString("base64");
 
-    // Cria arquivo no GitHub (API Contents)
-    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
-    const resp = await fetch(url, {
+    const ghRes = await fetch(`https://api.github.com/repos/${OWNER}/${encodeURIComponent(REPO)}/contents/${encodeURIComponent(path)}`, {
       method: "PUT",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        "Authorization": `Bearer ${TOKEN}`,
+        "Content-Type": "application/json",
         "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        message: `chore(data): save preenvio -> ${path}`,
-        content,
-        branch
-      })
+        message: `save: ${path}`,
+        content: b64,
+        branch: BRANCH,
+      }),
     });
 
-    const data = await resp.json();
+    const ghJson = await ghRes.json();
 
-    if (!resp.ok) {
-      return sendJson(res, resp.status, {
+    if (!ghRes.ok) {
+      return res.status(ghRes.status).json({
         ok: false,
         error: "github_save_failed",
-        status: resp.status,
-        details: data
+        status: ghRes.status,
+        details: ghJson,
       });
     }
 
-    return sendJson(res, 200, {
+    return res.status(200).json({
       ok: true,
       path,
-      content_sha: data.content?.sha,
-      commit_sha: data.commit?.sha
+      content_sha: ghJson.content?.sha,
+      commit_sha: ghJson.commit?.sha,
     });
   } catch (err) {
-    return sendJson(res, 500, { ok: false, error: "server_error", details: String(err) });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "server_error" });
   }
 }
